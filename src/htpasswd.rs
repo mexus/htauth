@@ -1,0 +1,366 @@
+use crate::error::{Error, Result};
+use crate::hash::HashAlgorithm;
+use crate::hash::{hash_password, verify_password};
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+
+/// Represents an htpasswd file with user credentials.
+pub struct Htpasswd {
+    entries: HashMap<String, String>,
+    comments: Vec<String>,
+    path: PathBuf,
+    file_existed: bool,
+}
+
+impl Htpasswd {
+    /// Open an htpasswd file, creating it if it doesn't exist.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let file_existed = path.exists();
+
+        let mut entries = HashMap::new();
+        let mut comments = Vec::new();
+
+        if file_existed {
+            let file = File::open(path)?;
+            let reader = BufReader::new(file);
+
+            for line in reader.lines() {
+                let line = line?;
+                let trimmed = line.trim();
+
+                // Skip empty lines
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Store comment lines
+                if trimmed.starts_with('#') {
+                    comments.push(trimmed.to_string());
+                    continue;
+                }
+
+                // Parse username:hash entries
+                if let Some((username, hash)) = trimmed.split_once(':') {
+                    if username.is_empty() {
+                        return Err(Error::InvalidUsername(
+                            "Username cannot be empty".to_string(),
+                        ));
+                    }
+                    if username.contains(':') {
+                        return Err(Error::InvalidUsername(format!(
+                            "Username '{}' contains invalid character ':'",
+                            username
+                        )));
+                    }
+                    entries.insert(username.to_string(), hash.to_string());
+                }
+            }
+        }
+
+        Ok(Self {
+            entries,
+            comments,
+            path: path.to_path_buf(),
+            file_existed,
+        })
+    }
+
+    /// Save the htpasswd file.
+    pub fn save(&self) -> Result<()> {
+        // Create parent directories if needed
+        if let Some(parent) = self.path.parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Set restrictive permissions when creating new file
+        #[cfg(unix)]
+        let mut file = if self.file_existed {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&self.path)?
+        } else {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&self.path)?
+        };
+
+        #[cfg(not(unix))]
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&self.path)?;
+
+        // Write comments first
+        for comment in &self.comments {
+            writeln!(file, "{}", comment)?;
+        }
+
+        // Write entries
+        for (username, hash) in &self.entries {
+            writeln!(file, "{}:{}", username, hash)?;
+        }
+
+        file.flush()?;
+        Ok(())
+    }
+
+    /// Reload the htpasswd file from disk.
+    pub fn reload(&mut self) -> Result<()> {
+        *self = Self::open(&self.path)?;
+        Ok(())
+    }
+
+    /// Add a new user with the given password and hash algorithm.
+    pub fn add_user(
+        &mut self,
+        username: &str,
+        password: &str,
+        algorithm: HashAlgorithm,
+    ) -> Result<()> {
+        if self.entries.contains_key(username) {
+            return Err(Error::UserAlreadyExists(username.to_string()));
+        }
+
+        let hash = hash_password(password, algorithm)?;
+        self.entries.insert(username.to_string(), hash);
+        Ok(())
+    }
+
+    /// Update an existing user's password with the specified algorithm.
+    pub fn update_user(
+        &mut self,
+        username: &str,
+        password: &str,
+        algorithm: HashAlgorithm,
+    ) -> Result<()> {
+        if !self.entries.contains_key(username) {
+            return Err(Error::UserNotFound(username.to_string()));
+        }
+
+        let hash = hash_password(password, algorithm)?;
+        self.entries.insert(username.to_string(), hash);
+        Ok(())
+    }
+
+    /// Delete a user from the htpasswd file.
+    pub fn delete_user(&mut self, username: &str) -> Result<()> {
+        if !self.entries.contains_key(username) {
+            return Err(Error::UserNotFound(username.to_string()));
+        }
+
+        self.entries.remove(username);
+        Ok(())
+    }
+
+    /// Verify a user's password.
+    pub fn verify_user(&self, username: &str, password: &str) -> Result<bool> {
+        let hash = self
+            .entries
+            .get(username)
+            .ok_or_else(|| Error::UserNotFound(username.to_string()))?;
+
+        verify_password(password, hash)
+    }
+
+    /// List all usernames in the htpasswd file.
+    pub fn list_users(&self) -> Vec<String> {
+        let mut users: Vec<String> = self.entries.keys().cloned().collect();
+        users.sort();
+        users
+    }
+
+    /// Check if a user exists in the htpasswd file.
+    pub fn user_exists(&self, username: &str) -> bool {
+        self.entries.contains_key(username)
+    }
+
+    /// Get the number of users in the htpasswd file.
+    pub fn user_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Get the file path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_create_and_save() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        htpasswd
+            .add_user("alice", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd
+            .add_user("bob", "password456", HashAlgorithm::Sha256)
+            .unwrap();
+        htpasswd.save().unwrap();
+
+        // Verify file exists and has correct content
+        assert!(file_path.exists());
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("alice:"));
+        assert!(content.contains("bob:"));
+        assert!(content.contains("{SHA256}"));
+    }
+
+    #[test]
+    fn test_add_duplicate_user() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        htpasswd
+            .add_user("alice", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        let result = htpasswd.add_user("alice", "password456", HashAlgorithm::Bcrypt);
+        assert!(matches!(result, Err(Error::UserAlreadyExists(_))));
+    }
+
+    #[test]
+    fn test_verify_user() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        htpasswd
+            .add_user("alice", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd.save().unwrap();
+
+        // Reload and verify
+        let htpasswd = Htpasswd::open(&file_path).unwrap();
+        assert!(htpasswd.verify_user("alice", "password123").unwrap());
+        assert!(!htpasswd.verify_user("alice", "wrongpassword").unwrap());
+        assert!(htpasswd.verify_user("nonexistent", "password").is_err());
+    }
+
+    #[test]
+    fn test_delete_user() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        htpasswd
+            .add_user("alice", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd.delete_user("alice").unwrap();
+        htpasswd.save().unwrap();
+
+        let htpasswd = Htpasswd::open(&file_path).unwrap();
+        assert!(!htpasswd.user_exists("alice"));
+    }
+
+    #[test]
+    fn test_delete_nonexistent_user() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        let result = htpasswd.delete_user("nonexistent");
+        assert!(matches!(result, Err(Error::UserNotFound(_))));
+    }
+
+    #[test]
+    fn test_update_user() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        htpasswd
+            .add_user("alice", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd
+            .update_user("alice", "newpassword", HashAlgorithm::Sha512)
+            .unwrap();
+        htpasswd.save().unwrap();
+
+        let htpasswd = Htpasswd::open(&file_path).unwrap();
+        assert!(!htpasswd.verify_user("alice", "password123").unwrap());
+        assert!(htpasswd.verify_user("alice", "newpassword").unwrap());
+    }
+
+    #[test]
+    fn test_list_users() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        htpasswd
+            .add_user("charlie", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd
+            .add_user("alice", "password456", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd
+            .add_user("bob", "password789", HashAlgorithm::Bcrypt)
+            .unwrap();
+
+        let users = htpasswd.list_users();
+        assert_eq!(users, vec!["alice", "bob", "charlie"]);
+    }
+
+    #[test]
+    fn test_user_exists() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        assert!(!htpasswd.user_exists("alice"));
+
+        htpasswd
+            .add_user("alice", "password123", HashAlgorithm::Bcrypt)
+            .unwrap();
+        assert!(htpasswd.user_exists("alice"));
+        assert!(!htpasswd.user_exists("bob"));
+    }
+
+    #[test]
+    fn test_comment_preservation() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.htpasswd");
+
+        // Create file with comments
+        {
+            let mut file = File::create(&file_path).unwrap();
+            writeln!(file, "# This is a comment").unwrap();
+            writeln!(file, "# Another comment").unwrap();
+            writeln!(file, "alice:$2b$12$testhash").unwrap();
+        }
+
+        let mut htpasswd = Htpasswd::open(&file_path).unwrap();
+        assert_eq!(htpasswd.comments.len(), 2);
+
+        htpasswd
+            .add_user("bob", "password456", HashAlgorithm::Bcrypt)
+            .unwrap();
+        htpasswd.save().unwrap();
+
+        // Verify comments are preserved
+        let content = fs::read_to_string(&file_path).unwrap();
+        assert!(content.contains("# This is a comment"));
+        assert!(content.contains("# Another comment"));
+    }
+}
