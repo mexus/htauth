@@ -1,7 +1,7 @@
 //! A lightweight alternative to Apache's htpasswd tool.
 //!
 //! This library provides functionality to create, read, and modify htpasswd files
-//! with support for bcrypt, SHA-256, and SHA-512 password hashing algorithms.
+//! with support for bcrypt, SHA-256, SHA-512, and APR1-MD5 password hashing algorithms.
 //!
 //! # Example
 //!
@@ -31,6 +31,7 @@
 //! # }
 //! ```
 
+mod apr1_md5;
 mod error;
 mod hash;
 mod htpasswd;

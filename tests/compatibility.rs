@@ -154,6 +154,34 @@ fn test_apache_sha512_read() {
     assert!(content.contains("$6$"));
 }
 
+#[test]
+fn test_apache_md5_read() {
+    if !has_apache_htpasswd() {
+        return;
+    }
+
+    let dir = create_test_dir();
+    let file_path = dir.path().join("test.htpasswd");
+
+    // Create file with Apache htpasswd (APR1-MD5, default with -m flag)
+    let _ = run_apache_htpasswd(&["-cmb", file_path.to_str().unwrap(), "alice", "testpass123"]);
+    let _ = run_apache_htpasswd(&["-mb", file_path.to_str().unwrap(), "bob", "testpass456"]);
+
+    // Read with our library
+    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    assert!(htpasswd.user_exists("alice"));
+    assert!(htpasswd.user_exists("bob"));
+
+    // Verify passwords work
+    assert!(htpasswd.verify_user("alice", "testpass123").unwrap());
+    assert!(htpasswd.verify_user("bob", "testpass456").unwrap());
+
+    // Check hash format
+    let content = std::fs::read_to_string(&file_path).unwrap();
+    // Apache htpasswd uses APR1-MD5 format: $apr1$salt$hash
+    assert!(content.contains("$apr1$"));
+}
+
 //
 // Test 2: Apache htpasswd can read our files
 //
@@ -260,6 +288,41 @@ fn test_our_sha512_with_apache_verify() {
     );
 }
 
+#[test]
+fn test_our_md5_with_apache_verify() {
+    if !has_apache_htpasswd() {
+        return;
+    }
+
+    let dir = create_test_dir();
+    let file_path = dir.path().join("test.htpasswd");
+
+    // Create file with our CLI (MD5/APR1)
+    let success = run_our_htpasswd_with_stdin(
+        &[
+            "add",
+            file_path.to_str().unwrap(),
+            "alice",
+            "--algorithm",
+            "md5",
+            "--password",
+        ],
+        "testpass123",
+    )
+    .unwrap();
+    assert!(success, "Our htpasswd failed to add user");
+
+    // Verify with Apache htpasswd (using -vm for APR1-MD5)
+    let result =
+        run_apache_htpasswd(&["-vmb", file_path.to_str().unwrap(), "alice", "testpass123"])
+            .unwrap();
+    assert!(
+        result.success,
+        "Apache verification failed: stderr={}",
+        result.stderr
+    );
+}
+
 //
 // Test 3: Cross-compatibility - mixed files
 //
@@ -312,19 +375,40 @@ fn test_mixed_file_compatibility() {
     )
     .unwrap();
 
+    // Apache - MD5
+    run_apache_htpasswd(&["-mb", file_path.to_str().unwrap(), "apache_md5", "pass5"]).unwrap();
+
+    // Our tool - MD5
+    run_our_htpasswd_with_stdin(
+        &[
+            "add",
+            file_path.to_str().unwrap(),
+            "our_md5",
+            "--algorithm",
+            "md5",
+            "--password",
+        ],
+        "pass6",
+    )
+    .unwrap();
+
     // Verify with our library
     let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
-    assert_eq!(htpasswd.user_count(), 4);
+    assert_eq!(htpasswd.user_count(), 6);
     assert!(htpasswd.verify_user("apache_bcrypt", "pass1").unwrap());
     assert!(htpasswd.verify_user("our_sha256", "pass2").unwrap());
     assert!(htpasswd.verify_user("apache_sha512", "pass3").unwrap());
     assert!(htpasswd.verify_user("our_bcrypt", "pass4").unwrap());
+    assert!(htpasswd.verify_user("apache_md5", "pass5").unwrap());
+    assert!(htpasswd.verify_user("our_md5", "pass6").unwrap());
 
     // Verify with Apache htpasswd
     for (user, pass, flag) in &[
         ("apache_bcrypt", "pass1", "-vb"),
         ("apache_sha512", "pass3", "-v5b"),
         ("our_bcrypt", "pass4", "-vb"),
+        ("apache_md5", "pass5", "-vmb"),
+        ("our_md5", "pass6", "-vmb"),
     ] {
         let result = run_apache_htpasswd(&[flag, file_path.to_str().unwrap(), user, pass]).unwrap();
         assert!(

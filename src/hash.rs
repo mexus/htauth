@@ -7,6 +7,7 @@ const BCRYPT_COST: u32 = 12;
 const BCRYPT_PREFIX: &str = "$2";
 const SHA256_PREFIX: &str = "$5$";
 const SHA512_PREFIX: &str = "$6$";
+const APR1_PREFIX: &str = "$apr1$";
 const DEFAULT_ROUNDS: u32 = 5000;
 
 // Salt length in bytes for SHA-256/SHA-512
@@ -18,6 +19,7 @@ pub enum HashAlgorithm {
     Bcrypt,
     Sha256,
     Sha512,
+    Apr1Md5,
 }
 
 impl FromStr for HashAlgorithm {
@@ -28,6 +30,7 @@ impl FromStr for HashAlgorithm {
             "bcrypt" => Ok(HashAlgorithm::Bcrypt),
             "sha256" => Ok(HashAlgorithm::Sha256),
             "sha512" => Ok(HashAlgorithm::Sha512),
+            "md5" | "apr1" | "apr1-md5" => Ok(HashAlgorithm::Apr1Md5),
             _ => Err(Error::UnknownAlgorithm(s.to_string())),
         }
     }
@@ -39,6 +42,7 @@ impl std::fmt::Display for HashAlgorithm {
             HashAlgorithm::Bcrypt => write!(f, "bcrypt"),
             HashAlgorithm::Sha256 => write!(f, "sha256"),
             HashAlgorithm::Sha512 => write!(f, "sha512"),
+            HashAlgorithm::Apr1Md5 => write!(f, "md5"),
         }
     }
 }
@@ -81,6 +85,11 @@ pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String>
             // Remove "rounds=5000$" for Apache compatibility
             Ok(hash.to_string().replace("$6$rounds=5000$", "$6$"))
         }
+        HashAlgorithm::Apr1Md5 => {
+            // APR1-MD5 for compatibility with Apache htpasswd
+            let salt = crate::apr1_md5::generate_salt()?;
+            Ok(crate::apr1_md5::hash(password, &salt))
+        }
     }
 }
 
@@ -102,6 +111,10 @@ pub fn verify_password(password: &str, hash_str: &str) -> Result<bool> {
                 .verify_password(password.as_bytes(), hash_str)
                 .is_ok())
         }
+        HashAlgorithm::Apr1Md5 => {
+            // APR1-MD5 verification
+            Ok(crate::apr1_md5::verify(password, hash_str))
+        }
     }
 }
 
@@ -113,6 +126,8 @@ pub fn detect_algorithm(hash: &str) -> Option<HashAlgorithm> {
         Some(HashAlgorithm::Sha256)
     } else if hash.starts_with(SHA512_PREFIX) {
         Some(HashAlgorithm::Sha512)
+    } else if hash.starts_with(APR1_PREFIX) {
+        Some(HashAlgorithm::Apr1Md5)
     } else {
         None
     }
