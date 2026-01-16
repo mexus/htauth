@@ -223,7 +223,8 @@ mod tests {
         let content = fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("alice:"));
         assert!(content.contains("bob:"));
-        assert!(content.contains("{SHA256}"));
+        // SHA-256 hashes now use SHA-crypt format: $5$rounds=5000$salt$hash
+        assert!(content.contains("$5$"));
     }
 
     #[test]

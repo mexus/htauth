@@ -19,11 +19,11 @@ pub enum Error {
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
 
-    #[error("Base64 decode error: {0}")]
-    Base64Error(#[from] base64::DecodeError),
-
     #[error("Bcrypt error: {0}")]
     BcryptError(#[from] bcrypt::BcryptError),
+
+    #[error("Password hash error: {0}")]
+    PasswordHashError(String),
 
     #[error("Unknown hash algorithm: {0}")]
     UnknownAlgorithm(String),

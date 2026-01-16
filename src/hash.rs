@@ -1,11 +1,17 @@
 use crate::error::{Error, Result};
 use bcrypt::{hash, verify};
-use sha2::{Digest, Sha256, Sha512};
+use sha_crypt::{Algorithm, Params, PasswordHasher, PasswordVerifier, ShaCrypt};
 use std::str::FromStr;
-use base64::Engine;
 
 const BCRYPT_COST: u32 = 12;
 const BCRYPT_PREFIX: &str = "$2";
+const SHA256_PREFIX: &str = "$5$";
+const SHA512_PREFIX: &str = "$6$";
+const DEFAULT_ROUNDS: u32 = 5000;
+
+// Salt length in bytes for SHA-256/SHA-512
+// Apache uses 16 characters of encoded salt (12 bytes → 16 chars when encoded with 6-bit chars)
+const SALT_BYTE_LEN: usize = 12; // 12 bytes * 8 bits = 96 bits = 16 chars * 6 bits
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashAlgorithm {
@@ -38,6 +44,10 @@ impl std::fmt::Display for HashAlgorithm {
 }
 
 /// Hash a password using the specified algorithm.
+///
+/// For SHA-256 and SHA-512, uses the SHA-crypt format compatible with Apache htpasswd.
+/// The format is `$5$rounds=N$salt$hash` for SHA-256 and `$6$rounds=N$salt$hash` for SHA-512.
+/// For compatibility with Apache htpasswd, we omit `rounds=5000` when using the default.
 pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String> {
     match algorithm {
         HashAlgorithm::Bcrypt => {
@@ -45,64 +55,52 @@ pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String>
             Ok(hash(password, BCRYPT_COST)?)
         }
         HashAlgorithm::Sha256 => {
-            let mut hasher = Sha256::new();
-            hasher.update(password.as_bytes());
-            let hash = hasher.finalize();
-            Ok(format!(
-                "{{SHA256}}{}",
-                base64::engine::general_purpose::STANDARD.encode(hash)
-            ))
+            let params =
+                Params::new(DEFAULT_ROUNDS).map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            let sha_crypt = ShaCrypt::new(Algorithm::Sha256Crypt, params);
+            let mut salt_bytes = [0u8; SALT_BYTE_LEN];
+            getrandom::fill(&mut salt_bytes)
+                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            let hash = sha_crypt
+                .hash_password_with_salt(password.as_bytes(), &salt_bytes)
+                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            // Remove "rounds=5000$" for Apache compatibility
+            // Apache omits the rounds parameter when using the default 5000
+            Ok(hash.to_string().replace("$5$rounds=5000$", "$5$"))
         }
         HashAlgorithm::Sha512 => {
-            let mut hasher = Sha512::new();
-            hasher.update(password.as_bytes());
-            let hash = hasher.finalize();
-            Ok(format!(
-                "{{SHA512}}{}",
-                base64::engine::general_purpose::STANDARD.encode(hash)
-            ))
+            let params =
+                Params::new(DEFAULT_ROUNDS).map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            let sha_crypt = ShaCrypt::new(Algorithm::Sha512Crypt, params);
+            let mut salt_bytes = [0u8; SALT_BYTE_LEN];
+            getrandom::fill(&mut salt_bytes)
+                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            let hash = sha_crypt
+                .hash_password_with_salt(password.as_bytes(), &salt_bytes)
+                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            // Remove "rounds=5000$" for Apache compatibility
+            Ok(hash.to_string().replace("$6$rounds=5000$", "$6$"))
         }
     }
 }
 
 /// Verify a password against a hash.
-pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
-    let algorithm = detect_algorithm(hash).ok_or_else(|| {
-        Error::InvalidHashFormat("Cannot determine hash algorithm".to_string())
-    })?;
+pub fn verify_password(password: &str, hash_str: &str) -> Result<bool> {
+    let algorithm = detect_algorithm(hash_str)
+        .ok_or_else(|| Error::InvalidHashFormat("Cannot determine hash algorithm".to_string()))?;
 
     match algorithm {
         HashAlgorithm::Bcrypt => {
             // All bcrypt variants ($2a$, $2b$, $2y$) are compatible for verification
-            verify(password, hash).map_err(Error::from)
+            verify(password, hash_str).map_err(Error::from)
         }
-        HashAlgorithm::Sha256 => {
-            if let Some(encoded) = hash.strip_prefix("{SHA256}") {
-                let mut hasher = Sha256::new();
-                hasher.update(password.as_bytes());
-                let computed = hasher.finalize();
-                let expected =
-                    base64::engine::general_purpose::STANDARD.decode(encoded.trim())?;
-                Ok(computed.as_slice() == expected.as_slice())
-            } else {
-                Err(Error::InvalidHashFormat(
-                    "Invalid SHA256 hash format".to_string(),
-                ))
-            }
-        }
-        HashAlgorithm::Sha512 => {
-            if let Some(encoded) = hash.strip_prefix("{SHA512}") {
-                let mut hasher = Sha512::new();
-                hasher.update(password.as_bytes());
-                let computed = hasher.finalize();
-                let expected =
-                    base64::engine::general_purpose::STANDARD.decode(encoded.trim())?;
-                Ok(computed.as_slice() == expected.as_slice())
-            } else {
-                Err(Error::InvalidHashFormat(
-                    "Invalid SHA512 hash format".to_string(),
-                ))
-            }
+        HashAlgorithm::Sha256 | HashAlgorithm::Sha512 => {
+            // sha-crypt handles both SHA-256 and SHA-512 verification
+            // Returns Ok(true) if valid, Ok(false) if invalid (not Err)
+            let sha_crypt = ShaCrypt::default();
+            Ok(sha_crypt
+                .verify_password(password.as_bytes(), hash_str)
+                .is_ok())
         }
     }
 }
@@ -111,13 +109,10 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool> {
 pub fn detect_algorithm(hash: &str) -> Option<HashAlgorithm> {
     if hash.starts_with(BCRYPT_PREFIX) {
         Some(HashAlgorithm::Bcrypt)
-    } else if hash.starts_with("{SHA256}") {
+    } else if hash.starts_with(SHA256_PREFIX) {
         Some(HashAlgorithm::Sha256)
-    } else if hash.starts_with("{SHA512}") {
+    } else if hash.starts_with(SHA512_PREFIX) {
         Some(HashAlgorithm::Sha512)
-    } else if hash.starts_with("{SHA}") {
-        // SHA-1 is not supported but we can detect it
-        None
     } else {
         None
     }
@@ -140,7 +135,18 @@ mod tests {
     fn test_sha256_hash_and_verify() {
         let password = "test_password_123";
         let hash = hash_password(password, HashAlgorithm::Sha256).unwrap();
-        assert!(hash.starts_with("{SHA256}"));
+        // SHA-crypt format: $5$rounds=5000$salt$hash
+        assert!(hash.starts_with("$5$"));
+        println!("Generated hash: {}", hash);
+
+        // Try direct library verification
+        use sha_crypt::{PasswordVerifier, ShaCrypt};
+        let sha_crypt = ShaCrypt::default();
+        match sha_crypt.verify_password(password.as_bytes(), hash.as_str()) {
+            Ok(_) => println!("Direct verification SUCCESS"),
+            Err(e) => println!("Direct verification FAILED: {:?}", e),
+        }
+
         assert!(verify_password(password, &hash).unwrap());
         assert!(!verify_password("wrong_password", &hash).unwrap());
     }
@@ -149,34 +155,33 @@ mod tests {
     fn test_sha512_hash_and_verify() {
         let password = "test_password_123";
         let hash = hash_password(password, HashAlgorithm::Sha512).unwrap();
-        assert!(hash.starts_with("{SHA512}"));
+        // SHA-crypt format: $6$rounds=5000$salt$hash
+        assert!(hash.starts_with("$6$"));
         assert!(verify_password(password, &hash).unwrap());
         assert!(!verify_password("wrong_password", &hash).unwrap());
     }
 
     #[test]
     fn test_detect_algorithm() {
+        assert_eq!(detect_algorithm("$2b$12$abc"), Some(HashAlgorithm::Bcrypt));
+        assert_eq!(detect_algorithm("$2y$12$abc"), Some(HashAlgorithm::Bcrypt));
+        assert_eq!(detect_algorithm("$2a$12$abc"), Some(HashAlgorithm::Bcrypt));
         assert_eq!(
-            detect_algorithm("$2b$12$abc"),
-            Some(HashAlgorithm::Bcrypt)
-        );
-        assert_eq!(
-            detect_algorithm("$2y$12$abc"),
-            Some(HashAlgorithm::Bcrypt)
-        );
-        assert_eq!(
-            detect_algorithm("$2a$12$abc"),
-            Some(HashAlgorithm::Bcrypt)
-        );
-        assert_eq!(
-            detect_algorithm("{SHA256}abc"),
+            detect_algorithm("$5$rounds=5000$salt$hash"),
             Some(HashAlgorithm::Sha256)
         );
         assert_eq!(
-            detect_algorithm("{SHA512}abc"),
+            detect_algorithm("$5$salt$hash"),
+            Some(HashAlgorithm::Sha256)
+        );
+        assert_eq!(
+            detect_algorithm("$6$rounds=5000$salt$hash"),
             Some(HashAlgorithm::Sha512)
         );
-        assert_eq!(detect_algorithm("{SHA}abc"), None);
+        assert_eq!(
+            detect_algorithm("$6$salt$hash"),
+            Some(HashAlgorithm::Sha512)
+        );
         assert_eq!(detect_algorithm("invalid"), None);
     }
 
@@ -199,5 +204,34 @@ mod tests {
             HashAlgorithm::Sha512
         );
         assert!(HashAlgorithm::from_str("invalid").is_err());
+    }
+
+    #[test]
+    fn test_apache_sha256_format() {
+        // Test that we can verify a hash generated by Apache htpasswd
+        // This hash was generated with: htpasswd -nb2 testuser testpass123
+        let apache_hash = "$5$6.O43dJ8bymsjcrp$QzfN4hZywImpvc6uE0O8TR.Xe87tgyvATwyV61rQbR5";
+        assert!(detect_algorithm(apache_hash) == Some(HashAlgorithm::Sha256));
+
+        // Debug: try direct library call
+        use sha_crypt::{PasswordVerifier, ShaCrypt};
+        let sha_crypt = ShaCrypt::default();
+        match sha_crypt.verify_password(b"testpass123", apache_hash) {
+            Ok(_) => println!("Direct Apache verification SUCCESS"),
+            Err(e) => println!("Direct Apache verification FAILED: {:?}", e),
+        }
+
+        assert!(verify_password("testpass123", apache_hash).unwrap());
+        assert!(!verify_password("wrongpass", apache_hash).unwrap());
+    }
+
+    #[test]
+    fn test_apache_sha512_format() {
+        // Test that we can verify a hash generated by Apache htpasswd
+        // This hash was generated with: htpasswd -nb5 testuser testpass123
+        let apache_hash = "$6$On58VpHvsS95KvxU$lbtz65RFxG2fcos.C3vi2wllW82efo8fDcO2PRVEnHwKpvS4tGE4OJ6He98QevZYUrenCYl9QiG0woAexDYkZ/";
+        assert!(detect_algorithm(apache_hash) == Some(HashAlgorithm::Sha512));
+        assert!(verify_password("testpass123", apache_hash).unwrap());
+        assert!(!verify_password("wrongpass", apache_hash).unwrap());
     }
 }

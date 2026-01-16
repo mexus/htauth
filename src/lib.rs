@@ -36,5 +36,5 @@ mod hash;
 mod htpasswd;
 
 pub use error::{Error, Result};
-pub use hash::{detect_algorithm, hash_password, HashAlgorithm, verify_password};
+pub use hash::{HashAlgorithm, detect_algorithm, hash_password, verify_password};
 pub use htpasswd::Htpasswd;
