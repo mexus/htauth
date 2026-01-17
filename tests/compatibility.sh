@@ -16,6 +16,11 @@ readonly NC='\033[0m' # No Color
 
 PASSED=0
 FAILED=0
+SKIPPED=0
+
+# Algorithm support flags (detected at runtime)
+APACHE_HAS_SHA256=false
+APACHE_HAS_SHA512=false
 
 # === Helper functions ===
 
@@ -33,6 +38,11 @@ log_fail() {
     ((FAILED++))
 }
 
+log_skip() {
+    echo -e "${YELLOW}[SKIP]${NC} $1"
+    ((SKIPPED++))
+}
+
 # Check prerequisites
 check_prerequisites() {
     if [[ ! -x "$APACHE_HTPASSWD" ]]; then
@@ -41,11 +51,29 @@ check_prerequisites() {
     fi
     log_info "Found Apache htpasswd at $APACHE_HTPASSWD"
 
-    # Report Apache htpasswd version
-    log_info "Apache htpasswd version:"
-    # htpasswd outputs version to stderr, and exits with error when called without proper args
-    "$APACHE_HTPASSWD" -v 2>&1 || true
     echo ""
+
+    # Detect algorithm support by checking if the flags are recognized
+    detect_algorithm_support
+}
+
+# Detect which algorithms the Apache htpasswd supports
+detect_algorithm_support() {
+    # Test SHA-256 support (-2 flag) using -n to output to stdout
+    if "$APACHE_HTPASSWD" -2nb testuser testpass >/dev/null 2>&1; then
+        APACHE_HAS_SHA256=true
+        log_info "Apache htpasswd supports SHA-256 (-2)"
+    else
+        log_info "Apache htpasswd does NOT support SHA-256 (-2) - related tests will be skipped"
+    fi
+
+    # Test SHA-512 support (-5 flag) using -n to output to stdout
+    if "$APACHE_HTPASSWD" -5nb testuser testpass >/dev/null 2>&1; then
+        APACHE_HAS_SHA512=true
+        log_info "Apache htpasswd supports SHA-512 (-5)"
+    else
+        log_info "Apache htpasswd does NOT support SHA-512 (-5) - related tests will be skipped"
+    fi
 }
 
 # Print verbose debug info on test failure
@@ -139,6 +167,11 @@ test_apache_bcrypt_read() {
 }
 
 test_apache_sha256_read() {
+    if [[ "$APACHE_HAS_SHA256" != "true" ]]; then
+        log_skip "Read Apache-created SHA-256 file (Apache htpasswd lacks -2 support)"
+        return 0
+    fi
+
     log_info "Testing: Read Apache-created SHA-256 file"
     local file="$TEST_DIR/apache_sha256.htpasswd"
     local apache_out verify_alice_out verify_bob_out
@@ -166,6 +199,11 @@ test_apache_sha256_read() {
 }
 
 test_apache_sha512_read() {
+    if [[ "$APACHE_HAS_SHA512" != "true" ]]; then
+        log_skip "Read Apache-created SHA-512 file (Apache htpasswd lacks -5 support)"
+        return 0
+    fi
+
     log_info "Testing: Read Apache-created SHA-512 file"
     local file="$TEST_DIR/apache_sha512.htpasswd"
     local apache_out verify_alice_out verify_bob_out
@@ -246,6 +284,11 @@ test_our_bcrypt_with_apache_verify() {
 }
 
 test_our_sha256_with_apache_verify() {
+    if [[ "$APACHE_HAS_SHA256" != "true" ]]; then
+        log_skip "Apache can verify our SHA-256 entry (Apache htpasswd lacks -2 support)"
+        return 0
+    fi
+
     log_info "Testing: Apache can verify our SHA-256 entry"
     local file="$TEST_DIR/our_sha256.htpasswd"
     local htauth_out apache_verify_out
@@ -267,6 +310,11 @@ test_our_sha256_with_apache_verify() {
 }
 
 test_our_sha512_with_apache_verify() {
+    if [[ "$APACHE_HAS_SHA512" != "true" ]]; then
+        log_skip "Apache can verify our SHA-512 entry (Apache htpasswd lacks -5 support)"
+        return 0
+    fi
+
     log_info "Testing: Apache can verify our SHA-512 entry"
     local file="$TEST_DIR/our_sha512.htpasswd"
     local htauth_out apache_verify_out
@@ -314,77 +362,114 @@ test_mixed_file_compatibility() {
     log_info "Testing: Mixed file with entries from both tools"
     local file="$TEST_DIR/mixed.htpasswd"
     local setup_out="" verify_out=""
+    local expected_count=4  # Base count: apache_bcrypt, our_bcrypt, apache_md5, our_md5
 
-    # Apache - bcrypt
+    # Apache - bcrypt (always)
     setup_out+="Apache bcrypt: $(run_apache -cBb "$file" apache_bcrypt pass1 2>&1)"$'\n' || true
 
-    # Our tool - SHA-256
-    setup_out+="htauth sha256: $(run_htauth pass2 add "$file" our_sha256 --algorithm sha256 --password 2>&1)"$'\n' || true
+    # Our tool - SHA-256 (only if Apache supports it for verification)
+    if [[ "$APACHE_HAS_SHA256" == "true" ]]; then
+        setup_out+="htauth sha256: $(run_htauth pass2 add "$file" our_sha256 --algorithm sha256 --password 2>&1)"$'\n' || true
+        ((expected_count++))
+    fi
 
-    # Apache - SHA-512
-    setup_out+="Apache sha512: $(run_apache -5b "$file" apache_sha512 pass3 2>&1)"$'\n' || true
+    # Apache - SHA-512 (only if Apache supports it)
+    if [[ "$APACHE_HAS_SHA512" == "true" ]]; then
+        setup_out+="Apache sha512: $(run_apache -5b "$file" apache_sha512 pass3 2>&1)"$'\n' || true
+        ((expected_count++))
+    fi
 
-    # Our tool - bcrypt
+    # Our tool - bcrypt (always)
     setup_out+="htauth bcrypt: $(run_htauth pass4 add "$file" our_bcrypt --password 2>&1)"$'\n' || true
 
-    # Apache - MD5
+    # Apache - MD5 (always)
     setup_out+="Apache md5: $(run_apache -mb "$file" apache_md5 pass5 2>&1)"$'\n' || true
 
-    # Our tool - MD5
+    # Our tool - MD5 (always)
     setup_out+="htauth md5: $(run_htauth pass6 add "$file" our_md5 --algorithm md5 --password 2>&1)"$'\n' || true
 
     # Verify user count
     local count
     count=$(count_users "$file")
-    if [[ $count -ne 6 ]]; then
-        log_fail "Mixed file has wrong user count: $count (expected 6)"
+    if [[ $count -ne $expected_count ]]; then
+        log_fail "Mixed file has wrong user count: $count (expected $expected_count)"
         debug_failure "Mixed file user count" "$file" \
             "Setup output" "$setup_out" \
-            "User count" "$count (expected 6)"
+            "User count" "$count (expected $expected_count)"
         return 1
     fi
 
-    # Capture verification outputs for debugging
+    # Capture verification outputs for debugging (always present users)
     verify_out+="htauth apache_bcrypt: $(run_htauth pass1 verify "$file" apache_bcrypt --password 2>&1)"$'\n' || true
-    verify_out+="htauth our_sha256: $(run_htauth pass2 verify "$file" our_sha256 --password 2>&1)"$'\n' || true
-    verify_out+="htauth apache_sha512: $(run_htauth pass3 verify "$file" apache_sha512 --password 2>&1)"$'\n' || true
     verify_out+="htauth our_bcrypt: $(run_htauth pass4 verify "$file" our_bcrypt --password 2>&1)"$'\n' || true
     verify_out+="htauth apache_md5: $(run_htauth pass5 verify "$file" apache_md5 --password 2>&1)"$'\n' || true
     verify_out+="htauth our_md5: $(run_htauth pass6 verify "$file" our_md5 --password 2>&1)"$'\n' || true
 
-    # Verify all users with our CLI
+    # Verify always-present users with our CLI
     if ! run_htauth pass1 verify "$file" apache_bcrypt --password >/dev/null 2>&1 || \
-       ! run_htauth pass2 verify "$file" our_sha256 --password >/dev/null 2>&1 || \
-       ! run_htauth pass3 verify "$file" apache_sha512 --password >/dev/null 2>&1 || \
        ! run_htauth pass4 verify "$file" our_bcrypt --password >/dev/null 2>&1 || \
        ! run_htauth pass5 verify "$file" apache_md5 --password >/dev/null 2>&1 || \
        ! run_htauth pass6 verify "$file" our_md5 --password >/dev/null 2>&1; then
-        log_fail "Mixed file verification with our CLI failed"
+        log_fail "Mixed file verification with our CLI failed (base users)"
         debug_failure "Mixed file htauth verification" "$file" \
             "Setup output" "$setup_out" \
             "htauth verification output" "$verify_out"
         return 1
     fi
 
-    # Capture Apache verification outputs
+    # Verify SHA-256 user if present
+    if [[ "$APACHE_HAS_SHA256" == "true" ]]; then
+        verify_out+="htauth our_sha256: $(run_htauth pass2 verify "$file" our_sha256 --password 2>&1)"$'\n' || true
+        if ! run_htauth pass2 verify "$file" our_sha256 --password >/dev/null 2>&1; then
+            log_fail "Mixed file verification with our CLI failed (SHA-256 user)"
+            debug_failure "Mixed file htauth SHA-256 verification" "$file" \
+                "Setup output" "$setup_out" \
+                "htauth verification output" "$verify_out"
+            return 1
+        fi
+    fi
+
+    # Verify SHA-512 user if present
+    if [[ "$APACHE_HAS_SHA512" == "true" ]]; then
+        verify_out+="htauth apache_sha512: $(run_htauth pass3 verify "$file" apache_sha512 --password 2>&1)"$'\n' || true
+        if ! run_htauth pass3 verify "$file" apache_sha512 --password >/dev/null 2>&1; then
+            log_fail "Mixed file verification with our CLI failed (SHA-512 user)"
+            debug_failure "Mixed file htauth SHA-512 verification" "$file" \
+                "Setup output" "$setup_out" \
+                "htauth verification output" "$verify_out"
+            return 1
+        fi
+    fi
+
+    # Capture Apache verification outputs (always present users)
     local apache_verify_out=""
     apache_verify_out+="Apache apache_bcrypt: $(run_apache -vb "$file" apache_bcrypt pass1 2>&1)"$'\n' || true
-    apache_verify_out+="Apache apache_sha512: $(run_apache -v5b "$file" apache_sha512 pass3 2>&1)"$'\n' || true
     apache_verify_out+="Apache our_bcrypt: $(run_apache -vb "$file" our_bcrypt pass4 2>&1)"$'\n' || true
     apache_verify_out+="Apache apache_md5: $(run_apache -vmb "$file" apache_md5 pass5 2>&1)"$'\n' || true
     apache_verify_out+="Apache our_md5: $(run_apache -vmb "$file" our_md5 pass6 2>&1)"$'\n' || true
 
-    # Verify selected users with Apache htpasswd
+    # Verify always-present users with Apache htpasswd
     if ! run_apache -vb "$file" apache_bcrypt pass1 >/dev/null 2>&1 || \
-       ! run_apache -v5b "$file" apache_sha512 pass3 >/dev/null 2>&1 || \
        ! run_apache -vb "$file" our_bcrypt pass4 >/dev/null 2>&1 || \
        ! run_apache -vmb "$file" apache_md5 pass5 >/dev/null 2>&1 || \
        ! run_apache -vmb "$file" our_md5 pass6 >/dev/null 2>&1; then
-        log_fail "Mixed file verification with Apache htpasswd failed"
+        log_fail "Mixed file verification with Apache htpasswd failed (base users)"
         debug_failure "Mixed file Apache verification" "$file" \
             "Setup output" "$setup_out" \
             "Apache verification output" "$apache_verify_out"
         return 1
+    fi
+
+    # Verify SHA-512 user with Apache if present
+    if [[ "$APACHE_HAS_SHA512" == "true" ]]; then
+        apache_verify_out+="Apache apache_sha512: $(run_apache -v5b "$file" apache_sha512 pass3 2>&1)"$'\n' || true
+        if ! run_apache -v5b "$file" apache_sha512 pass3 >/dev/null 2>&1; then
+            log_fail "Mixed file verification with Apache htpasswd failed (SHA-512 user)"
+            debug_failure "Mixed file Apache SHA-512 verification" "$file" \
+                "Setup output" "$setup_out" \
+                "Apache verification output" "$apache_verify_out"
+            return 1
+        fi
     fi
 
     log_pass "Mixed file compatibility test passed"
@@ -422,13 +507,20 @@ main() {
     echo "Test Summary"
     echo "=========================================="
     echo -e "${GREEN}Passed:${NC} $PASSED"
+    if [[ $SKIPPED -gt 0 ]]; then
+        echo -e "${YELLOW}Skipped:${NC} $SKIPPED"
+    fi
     if [[ $FAILED -gt 0 ]]; then
         echo -e "${RED}Failed:${NC} $FAILED"
         exit 1
     else
         echo -e "${GREEN}Failed:${NC} $FAILED"
         echo ""
-        echo -e "${GREEN}All tests passed!${NC}"
+        if [[ $SKIPPED -gt 0 ]]; then
+            echo -e "${GREEN}All executed tests passed!${NC} (some tests skipped due to missing Apache htpasswd features)"
+        else
+            echo -e "${GREEN}All tests passed!${NC}"
+        fi
         exit 0
     fi
 }
