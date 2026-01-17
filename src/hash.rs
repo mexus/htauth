@@ -51,7 +51,6 @@ impl std::fmt::Display for HashAlgorithm {
 ///
 /// For SHA-256 and SHA-512, uses the SHA-crypt format compatible with Apache htpasswd.
 /// The format is `$5$rounds=N$salt$hash` for SHA-256 and `$6$rounds=N$salt$hash` for SHA-512.
-/// For compatibility with Apache htpasswd, we omit `rounds=5000` when using the default.
 pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String> {
     match algorithm {
         HashAlgorithm::Bcrypt => {
@@ -68,9 +67,7 @@ pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String>
             let hash = sha_crypt
                 .hash_password_with_salt(password.as_bytes(), &salt_bytes)
                 .map_err(|e| Error::PasswordHashError(e.to_string()))?;
-            // Remove "rounds=5000$" for Apache compatibility
-            // Apache omits the rounds parameter when using the default 5000
-            Ok(hash.to_string().replace("$5$rounds=5000$", "$5$"))
+            Ok(hash.to_string())
         }
         HashAlgorithm::Sha512 => {
             let params =
@@ -82,8 +79,7 @@ pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String>
             let hash = sha_crypt
                 .hash_password_with_salt(password.as_bytes(), &salt_bytes)
                 .map_err(|e| Error::PasswordHashError(e.to_string()))?;
-            // Remove "rounds=5000$" for Apache compatibility
-            Ok(hash.to_string().replace("$6$rounds=5000$", "$6$"))
+            Ok(hash.to_string())
         }
         HashAlgorithm::Apr1Md5 => {
             // APR1-MD5 for compatibility with Apache htpasswd
