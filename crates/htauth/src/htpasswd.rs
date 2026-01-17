@@ -1,12 +1,64 @@
-use crate::error::{Error, Result};
 use crate::hash::HashAlgorithm;
 use crate::hash::{hash_password, verify_password};
+use snafu::{OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+
+/// Errors that can occur during htpasswd file operations.
+#[derive(Debug, Snafu)]
+pub enum Error {
+    /// User was not found in the htpasswd file.
+    #[snafu(display("User '{username}' not found"))]
+    UserNotFound { username: String },
+
+    /// User already exists in the htpasswd file.
+    #[snafu(display("User '{username}' already exists"))]
+    UserAlreadyExists { username: String },
+
+    /// Invalid username was provided.
+    #[snafu(display("Invalid username: {reason}"))]
+    InvalidUsername { reason: String },
+
+    /// Failed to open htpasswd file.
+    #[snafu(display("Failed to open htpasswd file '{}'", path.display()))]
+    FileOpen {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+
+    /// Failed to read from htpasswd file.
+    #[snafu(display("Failed to read htpasswd file '{}'", path.display()))]
+    FileRead {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+
+    /// Failed to save htpasswd file.
+    #[snafu(display("Failed to save htpasswd file '{}'", path.display()))]
+    FileSave {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+
+    /// Failed to create parent directory.
+    #[snafu(display("Failed to create parent directory '{}'", path.display()))]
+    CreateDir {
+        source: std::io::Error,
+        path: PathBuf,
+    },
+
+    /// Failed to hash password.
+    #[snafu(display("Failed to hash password"))]
+    Hash { source: crate::hash::Error },
+
+    /// Failed to verify password.
+    #[snafu(display("Failed to verify password"))]
+    Verify { source: crate::hash::Error },
+}
 
 /// Represents an htpasswd file with user credentials.
 pub struct Htpasswd {
@@ -18,7 +70,7 @@ pub struct Htpasswd {
 
 impl Htpasswd {
     /// Open an htpasswd file, creating it if it doesn't exist.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         let file_existed = path.exists();
 
@@ -26,11 +78,15 @@ impl Htpasswd {
         let mut comments = Vec::new();
 
         if file_existed {
-            let file = File::open(path)?;
+            let file = File::open(path).context(FileOpenSnafu {
+                path: path.to_path_buf(),
+            })?;
             let reader = BufReader::new(file);
 
             for line in reader.lines() {
-                let line = line?;
+                let line = line.context(FileReadSnafu {
+                    path: path.to_path_buf(),
+                })?;
                 let trimmed = line.trim();
 
                 // Skip empty lines
@@ -47,15 +103,19 @@ impl Htpasswd {
                 // Parse username:hash entries
                 if let Some((username, hash)) = trimmed.split_once(':') {
                     if username.is_empty() {
-                        return Err(Error::InvalidUsername(
-                            "Username cannot be empty".to_string(),
-                        ));
+                        return InvalidUsernameSnafu {
+                            reason: "Username cannot be empty".to_string(),
+                        }
+                        .fail();
                     }
                     if username.contains(':') {
-                        return Err(Error::InvalidUsername(format!(
-                            "Username '{}' contains invalid character ':'",
-                            username
-                        )));
+                        return InvalidUsernameSnafu {
+                            reason: format!(
+                                "Username '{}' contains invalid character ':'",
+                                username
+                            ),
+                        }
+                        .fail();
                     }
                     entries.insert(username.to_string(), hash.to_string());
                 }
@@ -71,12 +131,14 @@ impl Htpasswd {
     }
 
     /// Save the htpasswd file.
-    pub fn save(&self) -> Result<()> {
+    pub fn save(&self) -> Result<(), Error> {
         // Create parent directories if needed
         if let Some(parent) = self.path.parent()
             && !parent.exists()
         {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent).context(CreateDirSnafu {
+                path: parent.to_path_buf(),
+            })?;
         }
 
         // Set restrictive permissions when creating new file
@@ -86,14 +148,20 @@ impl Htpasswd {
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .open(&self.path)?
+                .open(&self.path)
+                .context(FileSaveSnafu {
+                    path: self.path.clone(),
+                })?
         } else {
             OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
                 .mode(0o600)
-                .open(&self.path)?
+                .open(&self.path)
+                .context(FileSaveSnafu {
+                    path: self.path.clone(),
+                })?
         };
 
         #[cfg(not(unix))]
@@ -101,24 +169,33 @@ impl Htpasswd {
             .write(true)
             .create(true)
             .truncate(true)
-            .open(&self.path)?;
+            .open(&self.path)
+            .context(FileSaveSnafu {
+                path: self.path.clone(),
+            })?;
 
         // Write comments first
         for comment in &self.comments {
-            writeln!(file, "{}", comment)?;
+            writeln!(file, "{}", comment).context(FileSaveSnafu {
+                path: self.path.clone(),
+            })?;
         }
 
         // Write entries
         for (username, hash) in &self.entries {
-            writeln!(file, "{}:{}", username, hash)?;
+            writeln!(file, "{}:{}", username, hash).context(FileSaveSnafu {
+                path: self.path.clone(),
+            })?;
         }
 
-        file.flush()?;
+        file.flush().context(FileSaveSnafu {
+            path: self.path.clone(),
+        })?;
         Ok(())
     }
 
     /// Reload the htpasswd file from disk.
-    pub fn reload(&mut self) -> Result<()> {
+    pub fn reload(&mut self) -> Result<(), Error> {
         *self = Self::open(&self.path)?;
         Ok(())
     }
@@ -129,12 +206,12 @@ impl Htpasswd {
         username: &str,
         password: &str,
         algorithm: HashAlgorithm,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         if self.entries.contains_key(username) {
-            return Err(Error::UserAlreadyExists(username.to_string()));
+            return UserAlreadyExistsSnafu { username }.fail();
         }
 
-        let hash = hash_password(password, algorithm)?;
+        let hash = hash_password(password, algorithm).context(HashSnafu)?;
         self.entries.insert(username.to_string(), hash);
         Ok(())
     }
@@ -145,20 +222,20 @@ impl Htpasswd {
         username: &str,
         password: &str,
         algorithm: HashAlgorithm,
-    ) -> Result<()> {
+    ) -> Result<(), Error> {
         if !self.entries.contains_key(username) {
-            return Err(Error::UserNotFound(username.to_string()));
+            return UserNotFoundSnafu { username }.fail();
         }
 
-        let hash = hash_password(password, algorithm)?;
+        let hash = hash_password(password, algorithm).context(HashSnafu)?;
         self.entries.insert(username.to_string(), hash);
         Ok(())
     }
 
     /// Delete a user from the htpasswd file.
-    pub fn delete_user(&mut self, username: &str) -> Result<()> {
+    pub fn delete_user(&mut self, username: &str) -> Result<(), Error> {
         if !self.entries.contains_key(username) {
-            return Err(Error::UserNotFound(username.to_string()));
+            return UserNotFoundSnafu { username }.fail();
         }
 
         self.entries.remove(username);
@@ -166,13 +243,13 @@ impl Htpasswd {
     }
 
     /// Verify a user's password.
-    pub fn verify_user(&self, username: &str, password: &str) -> Result<bool> {
+    pub fn verify_user(&self, username: &str, password: &str) -> Result<bool, Error> {
         let hash = self
             .entries
             .get(username)
-            .ok_or_else(|| Error::UserNotFound(username.to_string()))?;
+            .context(UserNotFoundSnafu { username })?;
 
-        verify_password(password, hash)
+        verify_password(password, hash).context(VerifySnafu)
     }
 
     /// List all usernames in the htpasswd file.
@@ -237,7 +314,7 @@ mod tests {
             .add_user("alice", "password123", HashAlgorithm::Bcrypt)
             .unwrap();
         let result = htpasswd.add_user("alice", "password456", HashAlgorithm::Bcrypt);
-        assert!(matches!(result, Err(Error::UserAlreadyExists(_))));
+        assert!(matches!(result, Err(Error::UserAlreadyExists { .. })));
     }
 
     #[test]
@@ -281,7 +358,7 @@ mod tests {
 
         let mut htpasswd = Htpasswd::open(&file_path).unwrap();
         let result = htpasswd.delete_user("nonexistent");
-        assert!(matches!(result, Err(Error::UserNotFound(_))));
+        assert!(matches!(result, Err(Error::UserNotFound { .. })));
     }
 
     #[test]

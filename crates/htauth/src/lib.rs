@@ -32,10 +32,11 @@
 //! ```
 
 mod apr1_md5;
-mod error;
 mod hash;
 mod htpasswd;
 
-pub use error::{Error, Result};
-pub use hash::{HashAlgorithm, detect_algorithm, hash_password, verify_password};
-pub use htpasswd::Htpasswd;
+pub use apr1_md5::Error as Apr1Md5Error;
+pub use hash::{
+    Error as HashError, HashAlgorithm, detect_algorithm, hash_password, verify_password,
+};
+pub use htpasswd::{Error as HtpasswdError, Htpasswd};

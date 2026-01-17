@@ -12,3 +12,5 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # Dev dependency shared across crates
 tempfile = "3.14"
+# Error handling
+snafu = "0.8"

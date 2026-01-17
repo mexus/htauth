@@ -1,7 +1,45 @@
-use crate::error::{Error, Result};
 use bcrypt::{hash, verify};
 use sha_crypt::{Algorithm, Params, PasswordHasher, PasswordVerifier, ShaCrypt};
+use snafu::{OptionExt, ResultExt, Snafu};
 use std::str::FromStr;
+
+/// Errors that can occur during password hashing and verification.
+#[derive(Debug, Snafu)]
+pub enum Error {
+    /// Unknown hash algorithm string was provided.
+    #[snafu(display("Unknown hash algorithm: {algorithm}"))]
+    UnknownAlgorithm { algorithm: String },
+
+    /// Failed to create a bcrypt hash.
+    #[snafu(display("Failed to create bcrypt hash"))]
+    BcryptHash { source: bcrypt::BcryptError },
+
+    /// Failed to verify a bcrypt hash.
+    #[snafu(display("Failed to verify bcrypt hash"))]
+    BcryptVerify { source: bcrypt::BcryptError },
+
+    /// Failed to create SHA-crypt parameters.
+    #[snafu(display("Failed to create SHA-crypt parameters"))]
+    ShaCryptParams { source: sha_crypt::Error },
+
+    /// Failed to generate random salt.
+    #[snafu(display("Failed to generate random salt"))]
+    SaltGeneration { source: getrandom::Error },
+
+    /// Failed to compute SHA-crypt hash.
+    #[snafu(display("Failed to compute SHA-crypt hash"))]
+    ShaCryptHash {
+        source: sha_crypt::password_hash::Error,
+    },
+
+    /// Invalid hash format - algorithm cannot be determined.
+    #[snafu(display("Invalid hash format: cannot determine algorithm from '{hash}'"))]
+    InvalidHashFormat { hash: String },
+
+    /// Failed to generate APR1-MD5 salt.
+    #[snafu(display("Failed to generate APR1-MD5 salt"))]
+    Apr1Salt { source: crate::apr1_md5::Error },
+}
 
 const BCRYPT_COST: u32 = 12;
 const BCRYPT_PREFIX: &str = "$2";
@@ -25,13 +63,13 @@ pub enum HashAlgorithm {
 impl FromStr for HashAlgorithm {
     type Err = Error;
 
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self, Error> {
         match s.to_lowercase().as_str() {
             "bcrypt" => Ok(HashAlgorithm::Bcrypt),
             "sha256" => Ok(HashAlgorithm::Sha256),
             "sha512" => Ok(HashAlgorithm::Sha512),
             "md5" | "apr1" | "apr1-md5" => Ok(HashAlgorithm::Apr1Md5),
-            _ => Err(Error::UnknownAlgorithm(s.to_string())),
+            _ => UnknownAlgorithmSnafu { algorithm: s }.fail(),
         }
     }
 }
@@ -51,53 +89,49 @@ impl std::fmt::Display for HashAlgorithm {
 ///
 /// For SHA-256 and SHA-512, uses the SHA-crypt format compatible with Apache htpasswd.
 /// The format is `$5$rounds=N$salt$hash` for SHA-256 and `$6$rounds=N$salt$hash` for SHA-512.
-pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String> {
+pub fn hash_password(password: &str, algorithm: HashAlgorithm) -> Result<String, Error> {
     match algorithm {
         HashAlgorithm::Bcrypt => {
             // bcrypt produces its own prefix like $2b$12$...
-            Ok(hash(password, BCRYPT_COST)?)
+            hash(password, BCRYPT_COST).context(BcryptHashSnafu)
         }
         HashAlgorithm::Sha256 => {
-            let params =
-                Params::new(DEFAULT_ROUNDS).map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            let params = Params::new(DEFAULT_ROUNDS).context(ShaCryptParamsSnafu)?;
             let sha_crypt = ShaCrypt::new(Algorithm::Sha256Crypt, params);
             let mut salt_bytes = [0u8; SALT_BYTE_LEN];
-            getrandom::fill(&mut salt_bytes)
-                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            getrandom::fill(&mut salt_bytes).context(SaltGenerationSnafu)?;
             let hash = sha_crypt
                 .hash_password_with_salt(password.as_bytes(), &salt_bytes)
-                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+                .context(ShaCryptHashSnafu)?;
             Ok(hash.to_string())
         }
         HashAlgorithm::Sha512 => {
-            let params =
-                Params::new(DEFAULT_ROUNDS).map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            let params = Params::new(DEFAULT_ROUNDS).context(ShaCryptParamsSnafu)?;
             let sha_crypt = ShaCrypt::new(Algorithm::Sha512Crypt, params);
             let mut salt_bytes = [0u8; SALT_BYTE_LEN];
-            getrandom::fill(&mut salt_bytes)
-                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+            getrandom::fill(&mut salt_bytes).context(SaltGenerationSnafu)?;
             let hash = sha_crypt
                 .hash_password_with_salt(password.as_bytes(), &salt_bytes)
-                .map_err(|e| Error::PasswordHashError(e.to_string()))?;
+                .context(ShaCryptHashSnafu)?;
             Ok(hash.to_string())
         }
         HashAlgorithm::Apr1Md5 => {
             // APR1-MD5 for compatibility with Apache htpasswd
-            let salt = crate::apr1_md5::generate_salt()?;
+            let salt = crate::apr1_md5::generate_salt().context(Apr1SaltSnafu)?;
             Ok(crate::apr1_md5::hash(password, &salt))
         }
     }
 }
 
 /// Verify a password against a hash.
-pub fn verify_password(password: &str, hash_str: &str) -> Result<bool> {
-    let algorithm = detect_algorithm(hash_str)
-        .ok_or_else(|| Error::InvalidHashFormat("Cannot determine hash algorithm".to_string()))?;
+pub fn verify_password(password: &str, hash_str: &str) -> Result<bool, Error> {
+    let algorithm =
+        detect_algorithm(hash_str).context(InvalidHashFormatSnafu { hash: hash_str })?;
 
     match algorithm {
         HashAlgorithm::Bcrypt => {
             // All bcrypt variants ($2a$, $2b$, $2y$) are compatible for verification
-            verify(password, hash_str).map_err(Error::from)
+            verify(password, hash_str).context(BcryptVerifySnafu)
         }
         HashAlgorithm::Sha256 | HashAlgorithm::Sha512 => {
             // sha-crypt handles both SHA-256 and SHA-512 verification

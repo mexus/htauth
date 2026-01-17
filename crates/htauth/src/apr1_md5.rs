@@ -26,8 +26,16 @@
 //! compatibility with existing Apache htpasswd files only. Do not use
 //! APR1-MD5 for new password hashes if possible - use bcrypt instead.
 
-use crate::error::Result;
 use md5::{Digest, Md5};
+use snafu::{ResultExt, Snafu};
+
+/// Errors that can occur during APR1-MD5 operations.
+#[derive(Debug, Snafu)]
+pub enum Error {
+    /// Failed to generate random salt.
+    #[snafu(display("Failed to generate random salt"))]
+    SaltGeneration { source: getrandom::Error },
+}
 
 /// Custom base64 alphabet (itoa64) used by APR1-MD5.
 ///
@@ -108,10 +116,9 @@ fn encode_apr1_hash(digest: &[u8; 16]) -> String {
 ///
 /// APR1-MD5 uses an 8-character salt. The salt is generated from 6 random
 /// bytes (48 bits), which are encoded using the itoa64 alphabet (6 bits per char).
-pub fn generate_salt() -> Result<String> {
+pub fn generate_salt() -> Result<String, Error> {
     let mut salt_bytes = [0u8; 6]; // 6 bytes * 8 bits = 48 bits = 8 chars * 6 bits
-    getrandom::fill(&mut salt_bytes)
-        .map_err(|e| crate::error::Error::PasswordHashError(e.to_string()))?;
+    getrandom::fill(&mut salt_bytes).context(SaltGenerationSnafu)?;
 
     // Encode using the same technique as the C code's generate_salt()
     let mut salt = String::with_capacity(APR1_SALT_LEN);

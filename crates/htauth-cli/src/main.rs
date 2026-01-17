@@ -1,9 +1,9 @@
-use anyhow::Result;
+// use anyhow::Result;
 use clap::Parser;
 use htauth::{HashAlgorithm, Htpasswd};
+use snafu::ResultExt;
 use std::io::{self, Read};
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 /// A lightweight alternative to Apache's htpasswd tool.
 #[derive(Parser)]
@@ -70,20 +70,26 @@ enum Commands {
     },
 }
 
+type Result<T> = ::std::result::Result<T, snafu::Whatever>;
+
 fn read_password_from_stdin() -> Result<String> {
     let mut password = String::new();
-    io::stdin().read_to_string(&mut password)?;
+    io::stdin()
+        .read_to_string(&mut password)
+        .whatever_context("Can't read password from stdin")?;
     Ok(password.trim_end().to_string())
 }
 
 fn prompt_password() -> Result<String> {
-    Ok(rpassword::prompt_password("Enter password: ")?)
+    rpassword::prompt_password("Enter password: ").whatever_context("Can't prompt for password")
 }
 
 fn prompt_password_confirm() -> Result<String> {
     loop {
-        let password = rpassword::prompt_password("New password: ")?;
-        let confirm = rpassword::prompt_password("Re-type new password: ")?;
+        let password = rpassword::prompt_password("New password: ")
+            .whatever_context("Can't prompt for new password")?;
+        let confirm = rpassword::prompt_password("Re-type new password: ")
+            .whatever_context("Can't prompt for password re-type")?;
 
         if password == confirm {
             return Ok(password);
@@ -93,16 +99,19 @@ fn prompt_password_confirm() -> Result<String> {
         // Ask if they want to try again
         eprint!("Try again? [Y/n]: ");
         let mut response = String::new();
-        io::stdin().read_line(&mut response)?;
+        io::stdin()
+            .read_line(&mut response)
+            .whatever_context("Can't read line")?;
         let response = response.trim().to_lowercase();
 
-        if response == "n" || response == "no" {
-            return Err(anyhow::anyhow!("Password confirmation failed"));
-        }
+        snafu::ensure_whatever!(
+            response == "n" || response == "no",
+            "Password confirmation failed"
+        );
     }
 }
 
-fn run() -> Result<ExitCode> {
+fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
@@ -118,14 +127,21 @@ fn run() -> Result<ExitCode> {
                 prompt_password_confirm()?
             };
 
-            let algo: HashAlgorithm = algorithm.parse()?;
-            let mut htpasswd = Htpasswd::open(&file)?;
+            let algo: HashAlgorithm = algorithm
+                .parse()
+                .whatever_context("Can't parse algorithm name")?;
+            let mut htpasswd =
+                Htpasswd::open(&file).whatever_context("Can't open password file")?;
 
-            htpasswd.add_user(&username, &password, algo)?;
-            htpasswd.save()?;
+            htpasswd
+                .add_user(&username, &password, algo)
+                .whatever_context("Can't add user")?;
+            htpasswd
+                .save()
+                .whatever_context("Can't save password file")?;
 
             println!("Adding password for user {}", username);
-            Ok(ExitCode::SUCCESS)
+            Ok(())
         }
 
         Commands::Update {
@@ -140,14 +156,21 @@ fn run() -> Result<ExitCode> {
                 prompt_password_confirm()?
             };
 
-            let algo: HashAlgorithm = algorithm.parse()?;
-            let mut htpasswd = Htpasswd::open(&file)?;
+            let algo: HashAlgorithm = algorithm
+                .parse()
+                .whatever_context("Can't parse algorithm name")?;
+            let mut htpasswd =
+                Htpasswd::open(&file).whatever_context("Can't open password file")?;
 
-            htpasswd.update_user(&username, &password, algo)?;
-            htpasswd.save()?;
+            htpasswd
+                .update_user(&username, &password, algo)
+                .whatever_context("Can't update user")?;
+            htpasswd
+                .save()
+                .whatever_context("Can't save password file")?;
 
             println!("Updating password for user {}", username);
-            Ok(ExitCode::SUCCESS)
+            Ok(())
         }
 
         Commands::Verify {
@@ -161,52 +184,50 @@ fn run() -> Result<ExitCode> {
                 prompt_password()?
             };
 
-            let htpasswd = Htpasswd::open(&file)?;
+            let htpasswd = Htpasswd::open(&file).whatever_context("Can't open password file")?;
 
             match htpasswd.verify_user(&username, &password) {
                 Ok(true) => {
                     println!("user {}: password correct", username);
-                    Ok(ExitCode::SUCCESS)
+                    Ok(())
                 }
                 Ok(false) => {
-                    eprintln!("user {}: password incorrect", username);
-                    Ok(ExitCode::FAILURE)
+                    snafu::whatever!("user {}: password incorrect", username)
                 }
                 Err(e) => {
-                    eprintln!("user {}: {}", username, e);
-                    Ok(ExitCode::FAILURE)
+                    snafu::whatever!("user {}: {}", username, e)
                 }
             }
         }
 
         Commands::List { file } => {
-            let htpasswd = Htpasswd::open(&file)?;
+            let htpasswd = Htpasswd::open(&file).whatever_context("Can't open password file")?;
             let users = htpasswd.list_users();
 
             for user in users {
                 println!("{}", user);
             }
 
-            Ok(ExitCode::SUCCESS)
+            Ok(())
         }
 
         Commands::Delete { file, username } => {
-            let mut htpasswd = Htpasswd::open(&file)?;
-            htpasswd.delete_user(&username)?;
-            htpasswd.save()?;
+            let mut htpasswd =
+                Htpasswd::open(&file).whatever_context("Can't open password file")?;
+            htpasswd
+                .delete_user(&username)
+                .whatever_context("Can't delete user")?;
+            htpasswd
+                .save()
+                .whatever_context("Can't save password file")?;
 
             println!("Deleting user {}", username);
-            Ok(ExitCode::SUCCESS)
+            Ok(())
         }
     }
 }
 
-fn main() -> ExitCode {
-    match run() {
-        Ok(code) => code,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            ExitCode::FAILURE
-        }
-    }
+#[snafu::report]
+fn main() -> Result<()> {
+    run()
 }
