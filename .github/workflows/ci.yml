@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+          cache: true
+
+      - name: Check
+        run: cargo check --all-targets
+        if: success()
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+        if: success()
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+        if: success()
+
+      - name: Build
+        run: cargo build
+        if: success()
+
+      - name: Test
+        run: cargo test
+        if: success()
+
+      - name: Install apache2-utils
+        run: sudo apt install -y apache2-utils
+        if: success()
+
+      - name: Apache compatibility tests
+        run: bash tests/compatibility.sh
+        if: success()
