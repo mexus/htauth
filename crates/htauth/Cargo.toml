@@ -12,6 +12,7 @@ sha-crypt = { version = "0.6.0-rc.2", features = ["getrandom"] }
 getrandom = "0.3"
 md-5 = "0.10"
 snafu = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

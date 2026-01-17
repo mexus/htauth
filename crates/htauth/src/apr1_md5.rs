@@ -28,6 +28,7 @@
 
 use md5::{Digest, Md5};
 use snafu::{ResultExt, Snafu};
+use zeroize::Zeroize;
 
 /// Errors that can occur during APR1-MD5 operations.
 #[derive(Debug, Snafu)]
@@ -207,6 +208,8 @@ pub fn hash(password: &str, salt: &str) -> String {
     hasher2.update(&context);
     let mut hash2 = hasher2.finalize();
 
+    context.zeroize();
+
     // Step 5: 1000 rounds of MD5 with alternating input
     for i in 0..APR1_ROUNDS {
         let mut input = Vec::new();
@@ -239,6 +242,8 @@ pub fn hash(password: &str, salt: &str) -> String {
         let mut hasher = Md5::new();
         hasher.update(&input);
         hash2 = hasher.finalize();
+
+        input.zeroize();
     }
 
     // Step 6: Encode the final hash

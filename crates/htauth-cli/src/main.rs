@@ -4,6 +4,7 @@ use htauth::{HashAlgorithm, Htpasswd};
 use snafu::ResultExt;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
 /// A lightweight alternative to Apache's htpasswd tool.
 #[derive(Parser)]
@@ -72,26 +73,32 @@ enum Commands {
 
 type Result<T> = ::std::result::Result<T, snafu::Whatever>;
 
-fn read_password_from_stdin() -> Result<String> {
+fn read_password_from_stdin() -> Result<Zeroizing<String>> {
     let mut password = String::new();
     io::stdin()
         .read_to_string(&mut password)
         .whatever_context("Can't read password from stdin")?;
-    Ok(password.trim_end().to_string())
+    Ok(Zeroizing::new(password.trim_end().to_string()))
 }
 
-fn prompt_password() -> Result<String> {
-    rpassword::prompt_password("Enter password: ").whatever_context("Can't prompt for password")
+fn prompt_password() -> Result<Zeroizing<String>> {
+    rpassword::prompt_password("Enter password: ")
+        .whatever_context("Can't prompt for password")
+        .map(Zeroizing::new)
 }
 
-fn prompt_password_confirm() -> Result<String> {
+fn prompt_password_confirm() -> Result<Zeroizing<String>> {
     loop {
-        let password = rpassword::prompt_password("New password: ")
-            .whatever_context("Can't prompt for new password")?;
-        let confirm = rpassword::prompt_password("Re-type new password: ")
-            .whatever_context("Can't prompt for password re-type")?;
+        let password = Zeroizing::new(
+            rpassword::prompt_password("New password: ")
+                .whatever_context("Can't prompt for new password")?,
+        );
+        let confirm = Zeroizing::new(
+            rpassword::prompt_password("Re-type new password: ")
+                .whatever_context("Can't prompt for password re-type")?,
+        );
 
-        if password == confirm {
+        if *password == *confirm {
             return Ok(password);
         }
 

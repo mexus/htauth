@@ -293,6 +293,7 @@ dependencies = [
  "sha-crypt",
  "snafu",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
@@ -304,6 +305,7 @@ dependencies = [
  "rpassword",
  "snafu",
  "tempfile",
+ "zeroize",
 ]
 
 [[package]]
