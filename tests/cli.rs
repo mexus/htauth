@@ -80,7 +80,7 @@ fn test_cli_add_user_bcrypt() {
     assert!(result.stdout.contains("alice") || result.stderr.contains("alice"));
 
     // Verify the user was added
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("alice"));
     assert!(htpasswd.verify_user("alice", "testpass123").unwrap());
 }
@@ -105,7 +105,7 @@ fn test_cli_add_user_sha256() {
     assert!(result.success, "stderr: {}", result.stderr);
 
     // Verify the user was added with SHA256
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("bob"));
     assert!(htpasswd.verify_user("bob", "testpass456").unwrap());
 
@@ -135,7 +135,7 @@ fn test_cli_add_user_sha512() {
     assert!(result.success, "stderr: {}", result.stderr);
 
     // Verify the user was added with SHA512
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("charlie"));
     assert!(htpasswd.verify_user("charlie", "testpass789").unwrap());
 
@@ -268,7 +268,7 @@ fn test_cli_update_user() {
     );
 
     // Verify old password works
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.verify_user("alice", "oldpass").unwrap());
 
     // Update password
@@ -279,7 +279,7 @@ fn test_cli_update_user() {
     assert!(result.success, "stderr: {}", result.stderr);
 
     // Verify new password works
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.verify_user("alice", "newpass").unwrap());
     assert!(!htpasswd.verify_user("alice", "oldpass").unwrap());
 }
@@ -315,7 +315,7 @@ fn test_cli_delete_user() {
     );
 
     // Verify user exists
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("alice"));
 
     // Delete user
@@ -323,7 +323,7 @@ fn test_cli_delete_user() {
     assert!(result.success, "stderr: {}", result.stderr);
 
     // Verify user is gone
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(!htpasswd.user_exists("alice"));
 }
 
@@ -376,7 +376,7 @@ fn test_cli_algorithm_variants() {
     }
 
     // Verify all users exist
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("user_bcrypt"));
     assert!(htpasswd.user_exists("user_sha256"));
     assert!(htpasswd.user_exists("user_sha512"));

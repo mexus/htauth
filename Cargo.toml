@@ -1,8 +1,8 @@
 [package]
-name = "htpasswd-rs"
+name = "htauth"
 version = "0.1.0"
 edition = "2024"
-description = "A lightweight alternative to Apache's htpasswd tool"
+description = "A library and CLI tool for managing htpasswd files"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

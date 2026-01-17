@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```no_run
-//! use htpasswd_rs::{Htpasswd, HashAlgorithm};
+//! use htauth::{Htpasswd, HashAlgorithm};
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create or open an htpasswd file

@@ -88,7 +88,7 @@ fn test_apache_bcrypt_read() {
     let _ = run_apache_htpasswd(&["-Bb", file_path.to_str().unwrap(), "bob", "testpass456"]);
 
     // Read with our library
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("alice"));
     assert!(htpasswd.user_exists("bob"));
 
@@ -112,7 +112,7 @@ fn test_apache_sha256_read() {
     let _ = run_apache_htpasswd(&["-2b", file_path.to_str().unwrap(), "bob", "testpass456"]);
 
     // Read with our library
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("alice"));
     assert!(htpasswd.user_exists("bob"));
 
@@ -140,7 +140,7 @@ fn test_apache_sha512_read() {
     let _ = run_apache_htpasswd(&["-5b", file_path.to_str().unwrap(), "bob", "testpass456"]);
 
     // Read with our library
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("alice"));
     assert!(htpasswd.user_exists("bob"));
 
@@ -168,7 +168,7 @@ fn test_apache_md5_read() {
     let _ = run_apache_htpasswd(&["-mb", file_path.to_str().unwrap(), "bob", "testpass456"]);
 
     // Read with our library
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert!(htpasswd.user_exists("alice"));
     assert!(htpasswd.user_exists("bob"));
 
@@ -393,7 +393,7 @@ fn test_mixed_file_compatibility() {
     .unwrap();
 
     // Verify with our library
-    let htpasswd = htpasswd_rs::Htpasswd::open(&file_path).unwrap();
+    let htpasswd = htauth::Htpasswd::open(&file_path).unwrap();
     assert_eq!(htpasswd.user_count(), 6);
     assert!(htpasswd.verify_user("apache_bcrypt", "pass1").unwrap());
     assert!(htpasswd.verify_user("our_sha256", "pass2").unwrap());

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
-use htpasswd_rs::{HashAlgorithm, Htpasswd};
+use htauth::{HashAlgorithm, Htpasswd};
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::ExitCode;
