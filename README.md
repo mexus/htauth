@@ -1,5 +1,11 @@
 # htauth
 
+[![CI](https://github.com/mexus/htauth/actions/workflows/ci.yml/badge.svg)](https://github.com/mexus/htauth/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/htauth.svg)](https://crates.io/crates/htauth)
+[![Documentation](https://docs.rs/htauth/badge.svg)](https://docs.rs/htauth)
+[![License](https://img.shields.io/crates/l/htauth.svg)](#license)
+[![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://blog.rust-lang.org/2025/05/15/Rust-1.88.0.html)
+
 A library and CLI tool for managing htpasswd files with support for bcrypt, SHA-256, SHA-512, and APR1-MD5 password hashing.
 
 **Dual-licensed under MIT or Apache-2.0**

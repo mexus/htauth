@@ -3,8 +3,10 @@ name = "htauth-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "A CLI tool for managing htpasswd files"
 license.workspace = true
+repository.workspace = true
+description = "A CLI tool for managing htpasswd files"
+readme = "README.md"
 
 [[bin]]
 name = "htauth"

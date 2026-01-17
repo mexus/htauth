@@ -4,7 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "A library for managing htpasswd files"
+readme = "README.md"
 
 [dependencies]
 bcrypt = "0.18"
