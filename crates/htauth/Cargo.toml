@@ -7,7 +7,7 @@ description.workspace = true
 license.workspace = true
 
 [dependencies]
-bcrypt = "0.16"
+bcrypt = "0.18"
 sha-crypt = { version = "0.6.0-rc.2", features = ["getrandom"] }
 getrandom = "0.3"
 md-5 = "0.10"
