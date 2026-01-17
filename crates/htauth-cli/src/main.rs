@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 /// A lightweight alternative to Apache's htpasswd tool.
 #[derive(Parser)]
-#[command(name = "htpasswd")]
+#[command(name = "htauth")]
 #[command(version, about, long_about = None)]
 struct Cli {
     #[command(subcommand)]

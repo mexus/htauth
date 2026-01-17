@@ -110,7 +110,8 @@ fn encode_apr1_hash(digest: &[u8; 16]) -> String {
 /// bytes (48 bits), which are encoded using the itoa64 alphabet (6 bits per char).
 pub fn generate_salt() -> Result<String> {
     let mut salt_bytes = [0u8; 6]; // 6 bytes * 8 bits = 48 bits = 8 chars * 6 bits
-    getrandom::fill(&mut salt_bytes).map_err(|e| crate::error::Error::PasswordHashError(e.to_string()))?;
+    getrandom::fill(&mut salt_bytes)
+        .map_err(|e| crate::error::Error::PasswordHashError(e.to_string()))?;
 
     // Encode using the same technique as the C code's generate_salt()
     let mut salt = String::with_capacity(APR1_SALT_LEN);
@@ -348,7 +349,11 @@ mod tests {
         let salt = generate_salt().unwrap();
         // All characters should be from the itoa64 alphabet
         for ch in salt.chars() {
-            assert!(ITOA64.contains(&(ch as u8)), "Invalid salt character: {}", ch);
+            assert!(
+                ITOA64.contains(&(ch as u8)),
+                "Invalid salt character: {}",
+                ch
+            );
         }
     }
 

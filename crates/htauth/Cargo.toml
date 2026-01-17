@@ -1,0 +1,17 @@
+[package]
+name = "htauth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description.workspace = true
+license.workspace = true
+
+[dependencies]
+bcrypt = "0.16"
+sha-crypt = { version = "0.6.0-rc.2", features = ["getrandom"] }
+getrandom = "0.3"
+md-5 = "0.10"
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = { workspace = true }
