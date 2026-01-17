@@ -8,37 +8,59 @@ use std::str::FromStr;
 pub enum Error {
     /// Unknown hash algorithm string was provided.
     #[snafu(display("Unknown hash algorithm: {algorithm}"))]
-    UnknownAlgorithm { algorithm: String },
+    UnknownAlgorithm {
+        /// The algorithm string that was not recognized.
+        algorithm: String,
+    },
 
     /// Failed to create a bcrypt hash.
     #[snafu(display("Failed to create bcrypt hash"))]
-    BcryptHash { source: bcrypt::BcryptError },
+    BcryptHash {
+        /// The underlying bcrypt error.
+        source: bcrypt::BcryptError,
+    },
 
     /// Failed to verify a bcrypt hash.
     #[snafu(display("Failed to verify bcrypt hash"))]
-    BcryptVerify { source: bcrypt::BcryptError },
+    BcryptVerify {
+        /// The underlying bcrypt error.
+        source: bcrypt::BcryptError,
+    },
 
     /// Failed to create SHA-crypt parameters.
     #[snafu(display("Failed to create SHA-crypt parameters"))]
-    ShaCryptParams { source: sha_crypt::Error },
+    ShaCryptParams {
+        /// The underlying SHA-crypt error.
+        source: sha_crypt::Error,
+    },
 
     /// Failed to generate random salt.
     #[snafu(display("Failed to generate random salt"))]
-    SaltGeneration { source: getrandom::Error },
+    SaltGeneration {
+        /// The underlying random generation error.
+        source: getrandom::Error,
+    },
 
     /// Failed to compute SHA-crypt hash.
     #[snafu(display("Failed to compute SHA-crypt hash"))]
     ShaCryptHash {
+        /// The underlying password hash error.
         source: sha_crypt::password_hash::Error,
     },
 
     /// Invalid hash format - algorithm cannot be determined.
     #[snafu(display("Invalid hash format: cannot determine algorithm from '{hash}'"))]
-    InvalidHashFormat { hash: String },
+    InvalidHashFormat {
+        /// The hash string that could not be parsed.
+        hash: String,
+    },
 
     /// Failed to generate APR1-MD5 salt.
     #[snafu(display("Failed to generate APR1-MD5 salt"))]
-    Apr1Salt { source: crate::apr1_md5::Error },
+    Apr1Salt {
+        /// The underlying APR1-MD5 error.
+        source: crate::apr1_md5::Error,
+    },
 }
 
 const BCRYPT_COST: u32 = 12;
@@ -52,11 +74,16 @@ const DEFAULT_ROUNDS: u32 = 5000;
 // Apache uses 16 characters of encoded salt (12 bytes → 16 chars when encoded with 6-bit chars)
 const SALT_BYTE_LEN: usize = 12; // 12 bytes * 8 bits = 96 bits = 16 chars * 6 bits
 
+/// Supported password hashing algorithms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashAlgorithm {
+    /// bcrypt with cost factor 12.
     Bcrypt,
+    /// SHA-256 crypt (SHA-crypt format `$5$`).
     Sha256,
+    /// SHA-512 crypt (SHA-crypt format `$6$`).
     Sha512,
+    /// Apache APR1-MD5 (format `$apr1$`).
     Apr1Md5,
 }
 

@@ -1,4 +1,7 @@
-// use anyhow::Result;
+#![warn(missing_docs)]
+
+//! A lightweight CLI alternative to Apache's htpasswd tool.
+
 use clap::Parser;
 use htauth::{HashAlgorithm, Htpasswd};
 use snafu::ResultExt;

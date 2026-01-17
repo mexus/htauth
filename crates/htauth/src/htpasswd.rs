@@ -14,11 +14,17 @@ use std::path::{Path, PathBuf};
 pub enum Error {
     /// User was not found in the htpasswd file.
     #[snafu(display("User '{username}' not found"))]
-    UserNotFound { username: String },
+    UserNotFound {
+        /// The username that was not found.
+        username: String,
+    },
 
     /// User already exists in the htpasswd file.
     #[snafu(display("User '{username}' already exists"))]
-    UserAlreadyExists { username: String },
+    UserAlreadyExists {
+        /// The username that already exists.
+        username: String,
+    },
 
     /// Username cannot be empty.
     #[snafu(display("Username cannot be empty"))]
@@ -26,43 +32,60 @@ pub enum Error {
 
     /// Username contains invalid character.
     #[snafu(display("Username '{}' contains invalid character ':'", username))]
-    UsernameInvalidCharacter { username: String },
+    UsernameInvalidCharacter {
+        /// The invalid username.
+        username: String,
+    },
 
     /// Failed to open htpasswd file.
     #[snafu(display("Failed to open htpasswd file '{}'", path.display()))]
     FileOpen {
+        /// The underlying I/O error.
         source: std::io::Error,
+        /// The file path that could not be opened.
         path: PathBuf,
     },
 
     /// Failed to read from htpasswd file.
     #[snafu(display("Failed to read htpasswd file '{}'", path.display()))]
     FileRead {
+        /// The underlying I/O error.
         source: std::io::Error,
+        /// The file path that could not be read.
         path: PathBuf,
     },
 
     /// Failed to save htpasswd file.
     #[snafu(display("Failed to save htpasswd file '{}'", path.display()))]
     FileSave {
+        /// The underlying I/O error.
         source: std::io::Error,
+        /// The file path that could not be saved.
         path: PathBuf,
     },
 
     /// Failed to create parent directory.
     #[snafu(display("Failed to create parent directory '{}'", path.display()))]
     CreateDir {
+        /// The underlying I/O error.
         source: std::io::Error,
+        /// The directory path that could not be created.
         path: PathBuf,
     },
 
     /// Failed to hash password.
     #[snafu(display("Failed to hash password"))]
-    Hash { source: crate::hash::Error },
+    Hash {
+        /// The underlying hash error.
+        source: crate::hash::Error,
+    },
 
     /// Failed to verify password.
     #[snafu(display("Failed to verify password"))]
-    Verify { source: crate::hash::Error },
+    Verify {
+        /// The underlying verification error.
+        source: crate::hash::Error,
+    },
 }
 
 /// Represents an htpasswd file with user credentials.

@@ -1,3 +1,5 @@
+#![warn(missing_docs)]
+
 //! A lightweight alternative to Apache's htpasswd tool.
 //!
 //! This library provides functionality to create, read, and modify htpasswd files

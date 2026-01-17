@@ -10,9 +10,9 @@
 //! itself is derived from the FreeBSD 3.0 MD5 crypt() function (Beer-Ware License).
 //!
 //! Key references:
-//! - Apache APR: https://github.com/apache/apr-util/blob/master/crypto/apr_md5.c
-//! - Apache htpasswd: https://github.com/apache/httpd/blob/trunk/support/htpasswd.c
-//! - FreeBSD crypt.c: https://github.com/freebsd/freebsd-src/blob/master/lib/libcrypt/crypt.c
+//! - Apache APR: <https://github.com/apache/apr-util/blob/master/crypto/apr_md5.c>
+//! - Apache htpasswd: <https://github.com/apache/httpd/blob/trunk/support/htpasswd.c>
+//! - FreeBSD crypt.c: <https://github.com/freebsd/freebsd-src/blob/master/lib/libcrypt/crypt.c>
 //!
 //! The itoa64 alphabet and encoding scheme are defined in APR's `to64()` function:
 //! ```c
@@ -36,7 +36,10 @@ use zeroize::Zeroize;
 pub enum Error {
     /// Failed to generate random salt.
     #[snafu(display("Failed to generate random salt"))]
-    SaltGeneration { source: getrandom::Error },
+    SaltGeneration {
+        /// The underlying random generation error.
+        source: getrandom::Error,
+    },
 }
 
 /// Custom base64 alphabet (itoa64) used by APR1-MD5.
