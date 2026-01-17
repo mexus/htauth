@@ -56,19 +56,6 @@ pub const APR1_SALT_LEN: usize = 8;
 /// Number of MD5 rounds in APR1 algorithm
 const APR1_ROUNDS: u32 = 1000;
 
-/// Encode a value using the itoa64 alphabet (Apache's to64 function).
-///
-/// Direct port of Apache's to64() from apr_md5.c.
-/// Takes `n` 6-bit values from `v` and encodes them using itoa64 alphabet.
-fn to64(mut v: u32, n: usize) -> String {
-    let mut result = String::with_capacity(n);
-    for _ in 0..n {
-        result.push(ITOA64[(v & 0x3f) as usize] as char);
-        v >>= 6;
-    }
-    result
-}
-
 /// Encode a 16-byte MD5 digest into a 22-character string.
 ///
 /// This follows Apache's exact encoding from apr_md5_encode().
@@ -83,32 +70,40 @@ fn to64(mut v: u32, n: usize) -> String {
 /// l = final[11];                                     to64(p, l, 2); p += 2;
 /// ```
 fn encode_apr1_hash(digest: &[u8; 16]) -> String {
+    const ITOA64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+
     let mut result = String::with_capacity(22);
 
-    // 4-char encodings (24 bits each) following Apache's to64() calls
-    result.push_str(&to64(
+    // Helper to encode n 6-bit values from v
+    let mut encode = |mut v: u32, n: usize| {
+        for _ in 0..n {
+            result.push(ITOA64[(v & 0x3f) as usize] as char);
+            v >>= 6;
+        }
+    };
+
+    // Same byte ordering as Apache's to64() calls
+    encode(
         u32::from(digest[0]) << 16 | u32::from(digest[6]) << 8 | u32::from(digest[12]),
         4,
-    ));
-    result.push_str(&to64(
+    );
+    encode(
         u32::from(digest[1]) << 16 | u32::from(digest[7]) << 8 | u32::from(digest[13]),
         4,
-    ));
-    result.push_str(&to64(
+    );
+    encode(
         u32::from(digest[2]) << 16 | u32::from(digest[8]) << 8 | u32::from(digest[14]),
         4,
-    ));
-    result.push_str(&to64(
+    );
+    encode(
         u32::from(digest[3]) << 16 | u32::from(digest[9]) << 8 | u32::from(digest[15]),
         4,
-    ));
-    result.push_str(&to64(
+    );
+    encode(
         u32::from(digest[4]) << 16 | u32::from(digest[10]) << 8 | u32::from(digest[5]),
         4,
-    ));
-
-    // 2-char encoding (12 bits)
-    result.push_str(&to64(u32::from(digest[11]), 2));
+    );
+    encode(u32::from(digest[11]), 2);
 
     result
 }
@@ -211,8 +206,10 @@ pub fn hash(password: &str, salt: &str) -> String {
     context.zeroize();
 
     // Step 5: 1000 rounds of MD5 with alternating input
+    // Pre-calculate max input size to avoid reallocations in the hot loop
+    let max_input_size = password_bytes.len() + 16 + 8 + password_bytes.len() + 16;
     for i in 0..APR1_ROUNDS {
-        let mut input = Vec::new();
+        let mut input = Vec::with_capacity(max_input_size);
 
         // Alternate between password and hash2
         if (i & 1) == 1 {

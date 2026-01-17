@@ -19,9 +19,13 @@ pub enum Error {
     #[snafu(display("User '{username}' already exists"))]
     UserAlreadyExists { username: String },
 
-    /// Invalid username was provided.
-    #[snafu(display("Invalid username: {reason}"))]
-    InvalidUsername { reason: String },
+    /// Username cannot be empty.
+    #[snafu(display("Username cannot be empty"))]
+    UsernameEmpty,
+
+    /// Username contains invalid character.
+    #[snafu(display("Username '{}' contains invalid character ':'", username))]
+    UsernameInvalidCharacter { username: String },
 
     /// Failed to open htpasswd file.
     #[snafu(display("Failed to open htpasswd file '{}'", path.display()))]
@@ -102,21 +106,11 @@ impl Htpasswd {
 
                 // Parse username:hash entries
                 if let Some((username, hash)) = trimmed.split_once(':') {
-                    if username.is_empty() {
-                        return InvalidUsernameSnafu {
-                            reason: "Username cannot be empty".to_string(),
-                        }
-                        .fail();
-                    }
-                    if username.contains(':') {
-                        return InvalidUsernameSnafu {
-                            reason: format!(
-                                "Username '{}' contains invalid character ':'",
-                                username
-                            ),
-                        }
-                        .fail();
-                    }
+                    snafu::ensure!(!username.is_empty(), UsernameEmptySnafu);
+                    snafu::ensure!(
+                        !username.contains(':'),
+                        UsernameInvalidCharacterSnafu { username }
+                    );
                     entries.insert(username.to_string(), hash.to_string());
                 }
             }
@@ -141,6 +135,9 @@ impl Htpasswd {
             })?;
         }
 
+        // Store reference to avoid repeated clones
+        let path = self.path.as_path();
+
         // Set restrictive permissions when creating new file
         #[cfg(unix)]
         let mut file = if self.file_existed {
@@ -149,9 +146,7 @@ impl Htpasswd {
                 .create(true)
                 .truncate(true)
                 .open(&self.path)
-                .context(FileSaveSnafu {
-                    path: self.path.clone(),
-                })?
+                .context(FileSaveSnafu { path })?
         } else {
             OpenOptions::new()
                 .write(true)
@@ -159,9 +154,7 @@ impl Htpasswd {
                 .truncate(true)
                 .mode(0o600)
                 .open(&self.path)
-                .context(FileSaveSnafu {
-                    path: self.path.clone(),
-                })?
+                .context(FileSaveSnafu { path })?
         };
 
         #[cfg(not(unix))]
@@ -170,27 +163,19 @@ impl Htpasswd {
             .create(true)
             .truncate(true)
             .open(&self.path)
-            .context(FileSaveSnafu {
-                path: self.path.clone(),
-            })?;
+            .context(FileSaveSnafu { path })?;
 
         // Write comments first
         for comment in &self.comments {
-            writeln!(file, "{}", comment).context(FileSaveSnafu {
-                path: self.path.clone(),
-            })?;
+            writeln!(file, "{}", comment).context(FileSaveSnafu { path })?;
         }
 
         // Write entries
         for (username, hash) in &self.entries {
-            writeln!(file, "{}:{}", username, hash).context(FileSaveSnafu {
-                path: self.path.clone(),
-            })?;
+            writeln!(file, "{}:{}", username, hash).context(FileSaveSnafu { path })?;
         }
 
-        file.flush().context(FileSaveSnafu {
-            path: self.path.clone(),
-        })?;
+        file.flush().context(FileSaveSnafu { path })?;
         Ok(())
     }
 
