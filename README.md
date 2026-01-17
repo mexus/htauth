@@ -126,7 +126,7 @@ The library uses [`snafu`](https://docs.rs/snafu) for structured error handling.
 
 ### Minimum Supported Rust Version
 
-**Rust 1.85** or later. The project uses Rust 2024 edition.
+**Rust 1.88** or later. The project uses Rust 2024 edition.
 
 ### Development
 
