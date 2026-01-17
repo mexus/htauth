@@ -26,7 +26,6 @@
 //! compatibility with existing Apache htpasswd files only. Do not use
 //! APR1-MD5 for new password hashes if possible - use bcrypt instead.
 
-use base64::{Engine as _, engine::general_purpose};
 use crate::error::Result;
 use md5::{Digest, Md5};
 
@@ -48,9 +47,22 @@ pub const APR1_SALT_LEN: usize = 8;
 /// Number of MD5 rounds in APR1 algorithm
 const APR1_ROUNDS: u32 = 1000;
 
+/// Encode a value using the itoa64 alphabet (Apache's to64 function).
+///
+/// Direct port of Apache's to64() from apr_md5.c.
+/// Takes `n` 6-bit values from `v` and encodes them using itoa64 alphabet.
+fn to64(mut v: u32, n: usize) -> String {
+    let mut result = String::with_capacity(n);
+    for _ in 0..n {
+        result.push(ITOA64[(v & 0x3f) as usize] as char);
+        v >>= 6;
+    }
+    result
+}
+
 /// Encode a 16-byte MD5 digest into a 22-character string.
 ///
-/// This follows the exact encoding scheme from Apache APR's `apr_md5_encode()`.
+/// This follows Apache's exact encoding from apr_md5_encode().
 ///
 /// The C code from apr_md5.c shows the byte ordering:
 /// ```c
@@ -59,60 +71,37 @@ const APR1_ROUNDS: u32 = 1000;
 /// l = (final[ 2]<<16) | (final[ 8]<<8) | final[14]; to64(p, l, 4); p += 4;
 /// l = (final[ 3]<<16) | (final[ 9]<<8) | final[15]; to64(p, l, 4); p += 4;
 /// l = (final[ 4]<<16) | (final[10]<<8) | final[ 5]; to64(p, l, 4); p += 4;
-/// l = final[11]; to64(p, l, 2); p += 2;
+/// l = final[11];                                     to64(p, l, 2); p += 2;
 /// ```
-///
-/// Byte order used: 0,6,12, 1,7,13, 2,8,14, 3,9,15, 4,10,5, 11
-///
-/// The encoding uses base64 with the custom itoa64 alphabet.
 fn encode_apr1_hash(digest: &[u8; 16]) -> String {
-    // Standard base64 alphabet
-    const BASE64_ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity(22);
 
-    // Step 1: Rearrange bytes according to APR pattern from apr_md5.c
-    // The byte ordering is: 0,6,12, 1,7,13, 2,8,14, 3,9,15, 4,10,5, 11
-    // This matches the pattern in Apache's to64() calls at end of apr_md5_encode()
-    let mut reordered = Vec::with_capacity(18); // 18 bytes: 2 padding + 16 data
+    // 4-char encodings (24 bits each) following Apache's to64() calls
+    result.push_str(&to64(
+        u32::from(digest[0]) << 16 | u32::from(digest[6]) << 8 | u32::from(digest[12]),
+        4,
+    ));
+    result.push_str(&to64(
+        u32::from(digest[1]) << 16 | u32::from(digest[7]) << 8 | u32::from(digest[13]),
+        4,
+    ));
+    result.push_str(&to64(
+        u32::from(digest[2]) << 16 | u32::from(digest[8]) << 8 | u32::from(digest[14]),
+        4,
+    ));
+    result.push_str(&to64(
+        u32::from(digest[3]) << 16 | u32::from(digest[9]) << 8 | u32::from(digest[15]),
+        4,
+    ));
+    result.push_str(&to64(
+        u32::from(digest[4]) << 16 | u32::from(digest[10]) << 8 | u32::from(digest[5]),
+        4,
+    ));
 
-    for i in (0..5).rev() {
-        reordered.push(digest[i]);
-        reordered.push(digest[i + 6]);
-        let j = if i + 12 == 16 { 5 } else { i + 12 };
-        reordered.push(digest[j]);
-    }
+    // 2-char encoding (12 bits)
+    result.push_str(&to64(u32::from(digest[11]), 2));
 
-    // Step 2: Add prefix: chr(0), chr(0), digest[11]
-    let mut final_bytes = vec![0u8, 0u8, digest[11]];
-    final_bytes.extend_from_slice(&reordered);
-
-    // Step 3: Base64 encode
-    let base64_encoded = general_purpose::STANDARD.encode(&final_bytes);
-
-    // Step 4: Skip first 2 characters and reverse
-    let skipped = &base64_encoded[2..];
-    let reversed: String = skipped.chars().rev().collect();
-
-    // Step 5: Translate from standard base64 to APR1 itoa64 alphabet
-    let translated = translate_base64_to_itoa64(&reversed, BASE64_ALPHABET);
-
-    translated
-}
-
-/// Translate a string from standard base64 alphabet to APR1 itoa64 alphabet.
-fn translate_base64_to_itoa64(input: &str, from_alphabet: &[u8; 64]) -> String {
-    let mut result = Vec::with_capacity(input.len());
-
-    for ch in input.bytes() {
-        if let Some(pos) = from_alphabet.iter().position(|&x| x == ch) {
-            result.push(ITOA64[pos]);
-        } else {
-            // Character not in alphabet (like '=' padding), keep as is
-            result.push(ch);
-        }
-    }
-
-    String::from_utf8(result).unwrap()
+    result
 }
 
 /// Generate a random salt string using the itoa64 alphabet.
