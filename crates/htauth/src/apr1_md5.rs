@@ -28,6 +28,7 @@
 
 use md5::{Digest, Md5};
 use snafu::{ResultExt, Snafu};
+use subtle::ConstantTimeEq;
 use zeroize::Zeroize;
 
 /// Errors that can occur during APR1-MD5 operations.
@@ -70,8 +71,6 @@ const APR1_ROUNDS: u32 = 1000;
 /// l = final[11];                                     to64(p, l, 2); p += 2;
 /// ```
 fn encode_apr1_hash(digest: &[u8; 16]) -> String {
-    const ITOA64: &[u8; 64] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
     let mut result = String::with_capacity(22);
 
     // Helper to encode n 6-bit values from v
@@ -208,8 +207,9 @@ pub fn hash(password: &str, salt: &str) -> String {
     // Step 5: 1000 rounds of MD5 with alternating input
     // Pre-calculate max input size to avoid reallocations in the hot loop
     let max_input_size = password_bytes.len() + 16 + 8 + password_bytes.len() + 16;
+    let mut input = Vec::with_capacity(max_input_size);
     for i in 0..APR1_ROUNDS {
-        let mut input = Vec::with_capacity(max_input_size);
+        input.clear();
 
         // Alternate between password and hash2
         if (i & 1) == 1 {
@@ -239,9 +239,8 @@ pub fn hash(password: &str, salt: &str) -> String {
         let mut hasher = Md5::new();
         hasher.update(&input);
         hash2 = hasher.finalize();
-
-        input.zeroize();
     }
+    input.zeroize();
 
     // Step 6: Encode the final hash
     let encoded_hash = encode_apr1_hash(&hash2.into());
@@ -270,16 +269,9 @@ pub fn verify(password: &str, hash_str: &str) -> bool {
     let salt_end = after_prefix.find('$').unwrap_or(after_prefix.len());
     let salt = &after_prefix[..salt_end];
 
-    // Re-compute the hash and compare
+    // Re-compute the hash and compare using constant-time comparison
     let computed = hash(password, salt);
-
-    // Use constant-time comparison
-    computed.len() == hash_str.len()
-        && computed
-            .as_bytes()
-            .iter()
-            .zip(hash_str.as_bytes().iter())
-            .all(|(a, b)| a == b)
+    computed.as_bytes().ct_eq(hash_str.as_bytes()).into()
 }
 
 #[cfg(test)]

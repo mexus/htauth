@@ -78,7 +78,9 @@ fn read_password_from_stdin() -> Result<Zeroizing<String>> {
     io::stdin()
         .read_to_string(&mut password)
         .whatever_context("Can't read password from stdin")?;
-    Ok(Zeroizing::new(password.trim_end().to_string()))
+    let trimmed_len = password.trim_end().len();
+    password.truncate(trimmed_len);
+    Ok(Zeroizing::new(password))
 }
 
 fn prompt_password() -> Result<Zeroizing<String>> {

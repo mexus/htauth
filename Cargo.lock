@@ -292,6 +292,7 @@ dependencies = [
  "md-5",
  "sha-crypt",
  "snafu",
+ "subtle",
  "tempfile",
  "zeroize",
 ]

@@ -2,6 +2,7 @@ use crate::hash::HashAlgorithm;
 use crate::hash::{hash_password, verify_password};
 use snafu::{OptionExt, ResultExt, Snafu};
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 #[cfg(unix)]
@@ -192,13 +193,14 @@ impl Htpasswd {
         password: &str,
         algorithm: HashAlgorithm,
     ) -> Result<(), Error> {
-        if self.entries.contains_key(username) {
-            return UserAlreadyExistsSnafu { username }.fail();
+        match self.entries.entry(username.to_string()) {
+            Entry::Occupied(_) => UserAlreadyExistsSnafu { username }.fail(),
+            Entry::Vacant(entry) => {
+                let hash = hash_password(password, algorithm).context(HashSnafu)?;
+                entry.insert(hash);
+                Ok(())
+            }
         }
-
-        let hash = hash_password(password, algorithm).context(HashSnafu)?;
-        self.entries.insert(username.to_string(), hash);
-        Ok(())
     }
 
     /// Update an existing user's password with the specified algorithm.
@@ -208,22 +210,19 @@ impl Htpasswd {
         password: &str,
         algorithm: HashAlgorithm,
     ) -> Result<(), Error> {
-        if !self.entries.contains_key(username) {
-            return UserNotFoundSnafu { username }.fail();
-        }
-
-        let hash = hash_password(password, algorithm).context(HashSnafu)?;
-        self.entries.insert(username.to_string(), hash);
+        let entry = self
+            .entries
+            .get_mut(username)
+            .context(UserNotFoundSnafu { username })?;
+        *entry = hash_password(password, algorithm).context(HashSnafu)?;
         Ok(())
     }
 
     /// Delete a user from the htpasswd file.
     pub fn delete_user(&mut self, username: &str) -> Result<(), Error> {
-        if !self.entries.contains_key(username) {
-            return UserNotFoundSnafu { username }.fail();
-        }
-
-        self.entries.remove(username);
+        self.entries
+            .remove(username)
+            .context(UserNotFoundSnafu { username })?;
         Ok(())
     }
 
